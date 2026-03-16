@@ -8,16 +8,32 @@ from typing import Dict, List, Optional
 from github import Github
 
 from config.settings import settings
+from github.app_auth import get_installation_token
 
 logger = logging.getLogger(__name__)
 
 
 def _get_github_client(token: Optional[str] = None) -> Github:
-    """Create a PyGithub client using the provided or configured token."""
-    token = token or settings.github_token
-    if not token:
-        raise RuntimeError("GitHub token is not configured.")
-    return Github(token)
+    """
+    Create a PyGithub client.
+
+    Preference order:
+    1. Explicit token argument (for testing/overrides).
+    2. GitHub App installation token.
+    3. Legacy personal access token from settings.github_token (fallback only).
+    """
+    effective_token: Optional[str] = token
+    if not effective_token:
+        try:
+            effective_token = get_installation_token()
+        except Exception:
+            # Fallback to legacy PAT for local/dev environments.
+            effective_token = settings.github_token
+
+    if not effective_token:
+        raise RuntimeError("No GitHub authentication token available (GitHub App and PAT missing).")
+
+    return Github(effective_token)
 
 
 def get_pr_diff(

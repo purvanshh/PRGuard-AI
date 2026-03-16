@@ -87,8 +87,50 @@ async def review_detail(pr_id: str) -> str:
             body += "</li>"
         body += "</ul>"
     body += "</div>"
+    body += f"<p><a href='/live/{pr_id}'>View live agent visualization for this PR</a></p>"
 
     return _render_html(f"Review {pr_id}", body)
+
+
+@app.get("/live/{pr_id}", response_class=HTMLResponse)
+async def live_view(pr_id: str) -> str:
+    """
+    Live agent visualization page backed by the /stream/{pr_id} WebSocket.
+    """
+    body = f"""
+<h1>Live Agent Execution for {pr_id}</h1>
+<div class="card">
+  <h2>Status</h2>
+  <pre id="log"></pre>
+</div>
+<div class="card">
+  <h2>Confidence</h2>
+  <p>Overall confidence: <span id="confidence">n/a</span></p>
+</div>
+<script>
+  const logEl = document.getElementById("log");
+  const confEl = document.getElementById("confidence");
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/stream/{pr_id}");
+
+  ws.onmessage = (event) => {{
+    const data = JSON.parse(event.data);
+    const line = JSON.stringify(data);
+    logEl.textContent += line + "\\n";
+    if (data.type === "confidence_updated" && data.overall_confidence !== undefined) {{
+      confEl.textContent = data.overall_confidence.toFixed(2);
+    }}
+  }};
+
+  ws.onopen = () => {{
+    logEl.textContent += "Connected to live stream...\\n";
+  }};
+
+  ws.onclose = () => {{
+    logEl.textContent += "Disconnected from live stream.\\n";
+  }};
+</script>
+"""
+    return _render_html(f"Live {pr_id}", body)
 
 
 __all__ = ["app"]

@@ -59,7 +59,9 @@ cp .env.example .env
 Set at minimum:
 
 - `OPENAI_API_KEY`
-- `GITHUB_TOKEN`
+- `GITHUB_APP_ID`
+- `GITHUB_APP_PRIVATE_KEY` (PEM string or path)
+- `GITHUB_APP_INSTALLATION_ID`
 - `GITHUB_WEBHOOK_SECRET`
 - `REDIS_URL` (optional, defaults to `redis://redis:6379/0`)
 
@@ -77,7 +79,7 @@ pip install -r requirements.txt
 pytest
 ```
 
-### Running with Docker Compose
+### Running with Docker Compose (dev)
 
 From the `prguard-ai` directory:
 
@@ -116,8 +118,61 @@ python scripts/demo_pr_review.py
 
 This will print a Markdown report similar to what is posted back to GitHub.
 
-### Dashboard & Replay
+### Dashboard, Live View & Replay
 
 - **Replay API**: `GET /review/{pr_id}` returns the stored agent logs and confidence trace.
 - **Dashboard app**: run `uvicorn dashboard.app:app --reload` and open `http://localhost:8000/dashboard` to inspect timelines and per-agent outputs for a given `pr_id`.
+- **Live view**: open `/live/{pr_id}` to see real-time agent start/finish events and confidence updates via WebSocket.
+
+### Evaluation & Benchmarking
+
+An evaluation framework and demo dataset live under `evaluation/`:
+
+- Dataset: `evaluation/dataset/*.json` (at least 5 labeled PR examples).
+- Runner: `scripts/run_benchmark.py`
+- Report: `evaluation/report.md` (generated).
+
+Run:
+
+```bash
+python scripts/run_benchmark.py
+```
+
+This will compute **precision**, **recall**, **F1 score**, and **average confidence**, then write a Markdown report to `evaluation/report.md`.
+
+### Production Deployment
+
+For a full production-style stack (API, worker, Redis, Prometheus, Grafana):
+
+```bash
+docker compose -f deploy/docker-compose.prod.yml up -d --build
+```
+
+Exposed services:
+
+- API: `http://localhost:8000`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3000` (default admin/admin)
+
+Grafana can be configured to visualize:
+
+- Review throughput (PRs processed per minute)
+- Agent latency (per-agent execution histograms)
+- LLM token usage and estimated cost
+
+### End-to-End Demo Script
+
+For a quick portfolio/demo run:
+
+```bash
+chmod +x scripts/run_demo.sh
+./scripts/run_demo.sh
+```
+
+This will:
+
+- Start the production Docker stack.
+- Simulate a PR webhook via `scripts/test_webhook.py`.
+- Run the benchmark suite.
+- Print URLs for the API, dashboard, Prometheus, and Grafana.
 

@@ -9,10 +9,11 @@ import logging
 import time
 from typing import Any, Dict, List
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 
 from config.settings import settings
 from analysis.repo_indexer import initialize_repo_index
+from analysis.code_graph import build_code_graph
 from github.github_client import (
     format_pr_review,
     get_pr_diff,
@@ -20,6 +21,14 @@ from github.github_client import (
     post_inline_comment,
 )
 from observability.logging import fetch_pr_logs, log_agent_execution
+from observability.event_stream import broker
+from observability.metrics import (
+    TOTAL_PRS_PROCESSED,
+    AGENT_EXECUTION_TIME,
+    REVIEW_CONFIDENCE,
+)
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from fastapi.responses import PlainTextResponse
 from queue.task_queue import (
     run_arbitrator,
     run_logic_agent,
@@ -107,6 +116,11 @@ async def github_webhook(
 
     # Initialize repository index for style retrieval.
     initialize_repo_index(repo_path=".")
+    # Warm dependency graph cache (best-effort).
+    try:
+        build_code_graph(".")
+    except Exception:
+        logger.warning("Failed to build code graph for repository %s", repo)
 
     repo_metadata: Dict[str, Any] = {
         "repository": repo,
@@ -116,10 +130,22 @@ async def github_webhook(
     }
 
     # Enqueue Celery tasks and wait for completion (tasks execute in parallel).
+    await broker.broadcast(
+        pr_id,
+        {"type": "agent_started", "agent": "style", "pr_id": pr_id},
+    )
     style_started = time.time()
     style_result = run_style_agent.delay(diff_text, repo_metadata)
+    await broker.broadcast(
+        pr_id,
+        {"type": "agent_started", "agent": "logic", "pr_id": pr_id},
+    )
     logic_started = time.time()
     logic_result = run_logic_agent.delay(diff_text, repo_metadata)
+    await broker.broadcast(
+        pr_id,
+        {"type": "agent_started", "agent": "security", "pr_id": pr_id},
+    )
     security_started = time.time()
     security_result = run_security_agent.delay(diff_text, repo_metadata)
 
@@ -134,7 +160,7 @@ async def github_webhook(
     logic_output = AgentOutput(**logic_output_dict)
     security_output = AgentOutput(**security_output_dict)
 
-    # Log agent executions.
+    # Log agent executions and emit events/metrics.
     log_agent_execution(
         pr_id,
         "style",
@@ -143,6 +169,17 @@ async def github_webhook(
         style_output_dict,
         execution_duration=style_finished - style_started,
         agent_order=1,
+    )
+    AGENT_EXECUTION_TIME.labels("style").observe(style_finished - style_started)
+    await broker.broadcast(
+        pr_id,
+        {
+            "type": "agent_finished",
+            "agent": "style",
+            "pr_id": pr_id,
+            "confidence": style_output.confidence,
+            "issue_count": len(style_output.issues),
+        },
     )
     log_agent_execution(
         pr_id,
@@ -153,6 +190,17 @@ async def github_webhook(
         execution_duration=logic_finished - logic_started,
         agent_order=2,
     )
+    AGENT_EXECUTION_TIME.labels("logic").observe(logic_finished - logic_started)
+    await broker.broadcast(
+        pr_id,
+        {
+            "type": "agent_finished",
+            "agent": "logic",
+            "pr_id": pr_id,
+            "confidence": logic_output.confidence,
+            "issue_count": len(logic_output.issues),
+        },
+    )
     log_agent_execution(
         pr_id,
         "security",
@@ -161,6 +209,17 @@ async def github_webhook(
         security_output_dict,
         execution_duration=security_finished - security_started,
         agent_order=3,
+    )
+    AGENT_EXECUTION_TIME.labels("security").observe(security_finished - security_started)
+    await broker.broadcast(
+        pr_id,
+        {
+            "type": "agent_finished",
+            "agent": "security",
+            "pr_id": pr_id,
+            "confidence": security_output.confidence,
+            "issue_count": len(security_output.issues),
+        },
     )
 
     # Run arbitrator as a Celery task.
@@ -182,6 +241,16 @@ async def github_webhook(
         arb_output,
         execution_duration=arb_finished - arb_started,
         agent_order=4,
+    )
+    TOTAL_PRS_PROCESSED.inc()
+    REVIEW_CONFIDENCE.observe(float(arb_output.get("overall_confidence", 0.0)))
+    await broker.broadcast(
+        pr_id,
+        {
+            "type": "confidence_updated",
+            "pr_id": pr_id,
+            "overall_confidence": arb_output.get("overall_confidence", 0.0),
+        },
     )
 
     comment_body = format_pr_review(arb_output)
@@ -239,6 +308,29 @@ async def health() -> Dict[str, str]:
         "redis": redis_status,
         "openai": openai_status,
     }
+
+
+@app.websocket("/stream/{pr_id}")
+async def stream_events(websocket: WebSocket, pr_id: str) -> None:
+    """
+    WebSocket endpoint for live event streaming for a given PR ID.
+    """
+    await broker.register(pr_id, websocket)
+    try:
+        while True:
+            # We don't expect messages from the client, but need to keep the connection alive.
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        await broker.unregister(pr_id, websocket)
+
+
+@app.get("/metrics")
+async def metrics() -> PlainTextResponse:
+    """
+    Prometheus metrics endpoint.
+    """
+    data = generate_latest()
+    return PlainTextResponse(data.decode("utf-8"), media_type=CONTENT_TYPE_LATEST)
 
 
 __all__ = ["app"]

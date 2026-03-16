@@ -11,3 +11,4 @@ openai
 pytest
 python-dotenv
 requests
+prometheus-client

@@ -10,6 +10,8 @@ from typing import Any, Dict, Tuple
 import openai
 
 from config.settings import settings
+from observability.logging import log_llm_usage
+from observability.metrics import LLM_TOKENS_USED
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +25,31 @@ MAX_TOKENS_PER_PR = 8000
 _PR_TOKEN_USAGE: Dict[str, int] = {}
 _LOCK = threading.Lock()
 
+
+def calculate_openai_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    """
+    Rough cost estimation in USD for OpenAI chat models.
+
+    Prices are approximate and can be adjusted as needed. This helper is
+    intentionally simple and only meant for relative reporting.
+    """
+    # Default to GPT-4o-style pricing.
+    prompt_rate = 5.0 / 1_000_000  # $5 / 1M tokens
+    completion_rate = 15.0 / 1_000_000  # $15 / 1M tokens
+
+    m = model.lower()
+    if "gpt-4o" in m:
+        prompt_rate = 5.0 / 1_000_000
+        completion_rate = 15.0 / 1_000_000
+    elif "gpt-4" in m:
+        prompt_rate = 10.0 / 1_000_000
+        completion_rate = 30.0 / 1_000_000
+    elif "gpt-3.5" in m:
+        prompt_rate = 0.5 / 1_000_000
+        completion_rate = 1.5 / 1_000_000
+
+    cost = prompt_tokens * prompt_rate + completion_tokens * completion_rate
+    return float(round(cost, 6))
 
 def _configure_openai() -> None:
     if getattr(openai, "api_key", None):
@@ -96,6 +123,21 @@ def generate_analysis(
                 "total_tokens": usage.get("total_tokens", 0),
                 "pr_id": pr_id,
             }
+
+            # Metrics and cost tracking.
+            total_tokens = int(meta["total_tokens"])
+            prompt_tokens = int(meta["prompt_tokens"])
+            completion_tokens = int(meta["completion_tokens"])
+            if pr_id:
+                log_llm_usage(
+                    pr_id=pr_id,
+                    agent="unknown",
+                    model=model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    estimated_cost_usd=calculate_openai_cost(model, prompt_tokens, completion_tokens),
+                )
+            LLM_TOKENS_USED.labels(agent="unknown", model=model).inc(total_tokens)
             return message, meta
         except openai.error.RateLimitError as exc:  # type: ignore[attr-defined]
             last_error = exc

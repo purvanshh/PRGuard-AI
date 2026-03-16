@@ -1,0 +1,16 @@
+{
+  "id": "demo-3-logic-todo-and-except",
+  "description": "Logic agent detects TODO and bare except",
+  "diff": "diff --git a/baz.py b/baz.py\nindex 555..666 100644\n--- a/baz.py\n+++ b/baz.py\n@@ -1,2 +1,5 @@\n-def foo(x):\n-    return x\n+def foo(x):\n+    # TODO: handle None case\n+    try:\n+        return x + 1\n+    except:\n+        return 0\n",
+  "expected_issues": [
+    {
+      "line": 3,
+      "message": "TODO present in newly added code."
+    },
+    {
+      "line": 6,
+      "message": "Bare except detected; this can hide runtime errors."
+    }
+  ]
+}
+

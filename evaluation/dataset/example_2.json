@@ -1,0 +1,12 @@
+{
+  "id": "demo-2-security-eval",
+  "description": "Use of eval is flagged as security issue",
+  "diff": "diff --git a/bar.py b/bar.py\nindex 333..444 100644\n--- a/bar.py\n+++ b/bar.py\n@@ -1,2 +1,3 @@\n-old_line = 1\n+old_line = 1\n+eval(\"print('unsafe')\")\n",
+  "expected_issues": [
+    {
+      "line": 3,
+      "message": "Use of eval/exec detected; this is often unsafe."
+    }
+  ]
+}
+

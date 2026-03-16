@@ -1,0 +1,12 @@
+{
+  "id": "demo-4-sql-injection",
+  "description": "Security agent flags SQL injection-like pattern",
+  "diff": "diff --git a/db.py b/db.py\nindex 777..888 100644\n--- a/db.py\n+++ b/db.py\n@@ -1,2 +1,4 @@\n-def get_user(id):\n-    pass\n+def get_user(username):\n+    query = \"SELECT * FROM users WHERE name = '\" + username + \"'\"\n+    return query\n",
+  "expected_issues": [
+    {
+      "line": 3,
+      "message": "Potential SQL injection pattern (string-concatenated query)."
+    }
+  ]
+}
+

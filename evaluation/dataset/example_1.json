@@ -1,0 +1,12 @@
+{
+  "id": "demo-1-style",
+  "description": "Simple style issue: long line and TODO",
+  "diff": "diff --git a/foo.py b/foo.py\nindex 111..222 100644\n--- a/foo.py\n+++ b/foo.py\n@@ -1,2 +1,3 @@\n-old = 1\n+old = 1\n+new_value = 1234567890  # TODO: refactor this very very very very very very very long line exceeding the style limit\n",
+  "expected_issues": [
+    {
+      "line": 3,
+      "message": "TODO present in newly added code."
+    }
+  ]
+}
+

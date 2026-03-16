@@ -41,6 +41,7 @@ def evaluate_pr(
             "missed_issue": 0,
             "precision": 0.0,
             "recall": 0.0,
+            "confidence": float(report.overall_confidence),
         }
 
     expected_set = {
@@ -61,6 +62,7 @@ def evaluate_pr(
         "missed_issue": fn,
         "precision": precision,
         "recall": recall,
+        "confidence": float(report.overall_confidence),
     }
 
 

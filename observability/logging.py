@@ -35,8 +35,10 @@ def _get_conn() -> sqlite3.Connection:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             pr_id TEXT NOT NULL,
             agent TEXT NOT NULL,
-            tokens_used INTEGER NOT NULL,
-            cost_estimate REAL NOT NULL
+            model TEXT,
+            prompt_tokens INTEGER NOT NULL,
+            completion_tokens INTEGER NOT NULL,
+            estimated_cost_usd REAL NOT NULL
         )
         """
     )
@@ -93,17 +95,33 @@ def log_agent_execution(
 def log_llm_usage(
     pr_id: str,
     agent: str,
-    tokens_used: int,
-    cost_estimate: float,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    estimated_cost_usd: float,
 ) -> None:
     conn = _get_conn()
     try:
         conn.execute(
             """
-            INSERT INTO llm_usage (pr_id, agent, tokens_used, cost_estimate)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO llm_usage (
+                pr_id,
+                agent,
+                model,
+                prompt_tokens,
+                completion_tokens,
+                estimated_cost_usd
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (str(pr_id), agent, int(tokens_used), float(cost_estimate)),
+            (
+                str(pr_id),
+                agent,
+                model,
+                int(prompt_tokens),
+                int(completion_tokens),
+                float(estimated_cost_usd),
+            ),
         )
         conn.commit()
     finally:
