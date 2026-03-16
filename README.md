@@ -183,6 +183,7 @@ cd PRGuard-AI
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install -e .
 
 # Configure environment
 cp .env.example .env
@@ -192,10 +193,10 @@ cp .env.example .env
 docker run -d -p 6379:6379 redis:7
 
 # Start the Celery worker
-celery -A task_queue.celery_app.celery_app worker --loglevel=INFO --concurrency=1
+celery -A prguard_ai.task_queue.celery_app.celery_app worker --loglevel=INFO --concurrency=1
 
 # In a separate terminal, start the API server
-python main.py
+python -m prguard_ai.main
 ```
 
 The server runs on `http://localhost:8000`.
@@ -272,32 +273,33 @@ Reference: [`.env.example`](.env.example)
 
 ```
 prguard-ai/
-├── agents/                  # Analysis agents (style, logic, security, arbitrator)
-├── analysis/                # Diff parsing, AST analysis, repo indexing, code graph, sandboxing
-├── confidence/              # Scoring engine with weighted confidence calibration
-├── config/                  # Pydantic-based settings (env-driven)
-├── cost/                    # LLM budget manager and token tracking
-├── dashboard/               # Optional web dashboard
-├── db/                      # Database layer
+├── src/
+│   └── prguard_ai/          # Installable Python package
+│       ├── agents/          # Analysis agents (style, logic, security, arbitrator)
+│       ├── analysis/        # Diff parsing, AST analysis, repo indexing, code graph, sandboxing
+│       ├── confidence/      # Scoring engine with weighted confidence calibration
+│       ├── config/          # Pydantic-based settings (env-driven)
+│       ├── cost/            # LLM budget manager and token tracking
+│       ├── dashboard/       # Optional web dashboard
+│       ├── db/              # Database layer
+│       ├── evaluation/      # Evaluation framework with precision/recall metrics
+│       ├── github/          # Webhook server, GitHub API client, App auth
+│       ├── llm/             # OpenAI client wrapper with token budgeting
+│       ├── observability/   # Structured logging, OpenTelemetry tracing, Prometheus metrics, event streaming
+│       ├── reliability/     # Reliability patterns (circuit breakers, etc.)
+│       ├── schemas/         # Pydantic models (AgentOutput, Issue, PullRequestReport)
+│       ├── security/        # Rate limiter (per-repo + per-installation)
+│       └── task_queue/      # Celery app, task definitions, task registry, Redis client
 ├── deploy/                  # Production docker-compose + Prometheus config
 ├── docs/                    # Architecture docs, example reviews, runbook
-├── evaluation/              # Evaluation framework with precision/recall metrics
 ├── fixtures/                # Test fixtures and sample data
-├── github/                  # Webhook server, GitHub API client, App auth
-├── llm/                     # OpenAI client wrapper with token budgeting
-├── observability/           # Structured logging, OpenTelemetry tracing, Prometheus metrics, event streaming
 ├── prompts/                 # Agent prompt templates (style, logic, security)
-├── queue/                   # Redis client utilities and legacy task queue
-├── reliability/             # Reliability patterns (circuit breakers, etc.)
-├── schemas/                 # Pydantic models (AgentOutput, Issue, PullRequestReport)
 ├── scripts/                 # Utility scripts
-├── security/                # Rate limiter (per-repo + per-installation)
-├── task_queue/              # Celery app, task definitions, task registry, Redis client
 ├── tests/                   # Unit and integration tests
 ├── .github/workflows/       # CI/CD pipeline (GitHub Actions)
-├── main.py                  # Application entrypoint
 ├── Dockerfile               # Python 3.11-slim container image
 ├── docker-compose.yml       # Multi-service orchestration (API + worker + Redis)
+├── pyproject.toml           # Project metadata and packaging config
 ├── requirements.txt         # Python dependencies
 └── .env.example             # Environment variable template
 ```
