@@ -97,6 +97,7 @@ def analyze_security(diff_text: str, repo_metadata: Dict[str, Any] | None = None
                         message="Use of eval/exec detected; this is often unsafe.",
                         evidence=text[:200],
                         confidence_source="rule_based",
+                        file_path=h.file_path,
                     )
                 )
             if detect_sql_injection(text):
@@ -107,6 +108,7 @@ def analyze_security(diff_text: str, repo_metadata: Dict[str, Any] | None = None
                         message="Potential SQL injection pattern (string-concatenated query).",
                         evidence=text[:200],
                         confidence_source="rule_based",
+                        file_path=h.file_path,
                     )
                 )
             if detect_hardcoded_secrets(text):
@@ -117,6 +119,7 @@ def analyze_security(diff_text: str, repo_metadata: Dict[str, Any] | None = None
                         message="Possible hardcoded secret or API key.",
                         evidence=text[:200],
                         confidence_source="rule_based",
+                        file_path=h.file_path,
                     )
                 )
 

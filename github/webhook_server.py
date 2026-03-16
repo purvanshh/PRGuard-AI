@@ -13,7 +13,12 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
 from config.settings import settings
 from analysis.repo_indexer import initialize_repo_index
-from github.github_client import format_pr_review, get_pr_diff, post_pr_comment
+from github.github_client import (
+    format_pr_review,
+    get_pr_diff,
+    post_pr_comment,
+    post_inline_comment,
+)
 from observability.logging import fetch_pr_logs, log_agent_execution
 from queue.task_queue import (
     run_arbitrator,
@@ -129,10 +134,34 @@ async def github_webhook(
     logic_output = AgentOutput(**logic_output_dict)
     security_output = AgentOutput(**security_output_dict)
 
-    # Log agent executions (token usage is captured inside each agent's call to LLM).
-    log_agent_execution(pr_id, "style", style_started, style_finished, style_output_dict)
-    log_agent_execution(pr_id, "logic", logic_started, logic_finished, logic_output_dict)
-    log_agent_execution(pr_id, "security", security_started, security_finished, security_output_dict)
+    # Log agent executions.
+    log_agent_execution(
+        pr_id,
+        "style",
+        style_started,
+        style_finished,
+        style_output_dict,
+        execution_duration=style_finished - style_started,
+        agent_order=1,
+    )
+    log_agent_execution(
+        pr_id,
+        "logic",
+        logic_started,
+        logic_finished,
+        logic_output_dict,
+        execution_duration=logic_finished - logic_started,
+        agent_order=2,
+    )
+    log_agent_execution(
+        pr_id,
+        "security",
+        security_started,
+        security_finished,
+        security_output_dict,
+        execution_duration=security_finished - security_started,
+        agent_order=3,
+    )
 
     # Run arbitrator as a Celery task.
     arb_started = time.time()
@@ -145,10 +174,44 @@ async def github_webhook(
     )
     arb_output = arb_result.get(timeout=60)
     arb_finished = time.time()
-    log_agent_execution(pr_id, "arbitrator", arb_started, arb_finished, arb_output)
+    log_agent_execution(
+        pr_id,
+        "arbitrator",
+        arb_started,
+        arb_finished,
+        arb_output,
+        execution_duration=arb_finished - arb_started,
+        agent_order=4,
+    )
 
     comment_body = format_pr_review(arb_output)
     post_pr_comment(repo_full_name=repo, pr_number=pr_number, body=comment_body)
+
+    # Post inline comments for medium/high severity issues (up to 10).
+    inline_count = 0
+    for issue in arb_output.get("issues", []):
+        if inline_count >= 10:
+            break
+        severity = str(issue.get("severity", "")).lower()
+        if severity not in {"medium", "high"}:
+            continue
+        file_path = issue.get("file_path")
+        if not file_path:
+            continue
+        line = int(issue.get("line", 1))
+        body = (
+            "⚠ PRGuard AI\n"
+            f"Issue: {issue.get('message')}\n"
+            f"Evidence: {issue.get('evidence')}"
+        )
+        post_inline_comment(
+            repo_full_name=repo,
+            pr_number=pr_number,
+            path=file_path,
+            line=line,
+            body=body,
+        )
+        inline_count += 1
 
     return {"status": "ok", "overall_confidence": arb_output.get("overall_confidence", 0.0)}
 

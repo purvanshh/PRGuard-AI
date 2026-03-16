@@ -128,6 +128,7 @@ def analyze_logic(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -
                         message="TODO present in newly added code.",
                         evidence=text[:200],
                         confidence_source="inferred",
+                        file_path=h.file_path,
                     )
                 )
             if "except:" in text:
@@ -138,6 +139,7 @@ def analyze_logic(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -
                         message="Bare except detected; this can hide runtime errors.",
                         evidence=text[:200],
                         confidence_source="rule_based",
+                        file_path=h.file_path,
                     )
                 )
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Dict, List, Optional
 
 from github import Github
 
@@ -27,19 +27,10 @@ def get_pr_diff(
 ) -> str:
     """
     Fetch the unified diff for a pull request.
-
-    Args:
-        repo_full_name: Repository in owner/name format.
-        pr_number: Pull request number.
-        token: Optional override for GitHub token.
-
-    Returns:
-        Unified diff string.
     """
     gh = _get_github_client(token)
     repo = gh.get_repo(repo_full_name)
     pr = repo.get_pull(pr_number)
-    # PyGithub exposes the raw diff via the `raw_data` or `head`/`base` comparison.
     diff = repo.compare(pr.base.sha, pr.head.sha)
     return diff.diff
 
@@ -48,13 +39,12 @@ def format_pr_review(report: dict) -> str:
     """
     Format a PR review comment in Markdown from a PullRequestReport-like dict.
     """
-    lines = []
+    lines: List[str] = []
     lines.append("## PRGuard AI Review")
     lines.append("")
     lines.append(f"**Confidence Score:** {report.get('overall_confidence', 0.0):.2f}")
     lines.append("")
 
-    # Group issues by agent.
     agent_sections: Dict[str, List[dict]] = {"style": [], "logic": [], "security": []}
     for output in report.get("agent_outputs", []):
         agent_name = output.get("agent", "").lower()
@@ -77,7 +67,6 @@ def format_pr_review(report: dict) -> str:
     _render_section("Logic", agent_sections["logic"])
     _render_section("Security", agent_sections["security"])
 
-    # Disagreement summary (if present).
     disagreements = report.get("disagreements") or []
     lines.append("### Disagreement Summary")
     if disagreements:
@@ -97,12 +86,6 @@ def post_pr_comment(
 ) -> None:
     """
     Post a review-style comment on a pull request.
-
-    Args:
-        repo_full_name: Repository in owner/name format.
-        pr_number: Pull request number.
-        body: Comment body text.
-        token: Optional override for GitHub token.
     """
     gh = _get_github_client(token)
     repo = gh.get_repo(repo_full_name)
@@ -111,5 +94,30 @@ def post_pr_comment(
     pr.create_issue_comment(body)
 
 
-__all__ = ["get_pr_diff", "post_pr_comment", "format_pr_review"]
+def post_inline_comment(
+    repo_full_name: str,
+    pr_number: int,
+    path: str,
+    line: int,
+    body: str,
+    token: Optional[str] = None,
+) -> None:
+    """
+    Post an inline comment on a specific file/line in a pull request.
+    """
+    gh = _get_github_client(token)
+    repo = gh.get_repo(repo_full_name)
+    pr = repo.get_pull(pr_number)
+    commit_id = pr.head.sha
+    logger.info(
+        "Posting inline comment to %s#%s at %s:%s",
+        repo_full_name,
+        pr_number,
+        path,
+        line,
+    )
+    pr.create_review_comment(body, commit_id, path, line)
+
+
+__all__ = ["get_pr_diff", "post_pr_comment", "format_pr_review", "post_inline_comment"]
 

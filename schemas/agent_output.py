@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 from pydantic import BaseModel, Field, validator
 
@@ -16,6 +16,10 @@ class Issue(BaseModel):
     evidence: str = Field(..., description="Excerpt or snippet supporting the finding.")
     confidence_source: str = Field(
         ..., description="Source of confidence, e.g. rule_based, llm_reasoning, inferred."
+    )
+    file_path: Optional[str] = Field(
+        default=None,
+        description="Optional path to the file where the issue was detected.",
     )
 
     @validator("severity")

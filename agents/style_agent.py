@@ -87,6 +87,7 @@ def analyze_style(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -
                         message="Tab character used for indentation instead of spaces.",
                         evidence=text[:200],
                         confidence_source="rule_based",
+                        file_path=hunk.file_path,
                     )
                 )
             if len(text) > 120:
@@ -97,6 +98,7 @@ def analyze_style(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -
                         message="Line exceeds 120 characters.",
                         evidence=text[:200],
                         confidence_source="rule_based",
+                        file_path=hunk.file_path,
                     )
                 )
 

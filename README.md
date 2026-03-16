@@ -33,7 +33,10 @@ GitHub PR Event
   Confidence Arbitrator
         |
         v
- GitHub PR Comment
+ Summary Comment + Inline Comments
+        |
+        v
+ Replay Logs & Dashboard
 ```
 
 ### Setup Instructions
@@ -101,5 +104,20 @@ This will start:
    - Enable **Pull requests**.
 5. Click **Add webhook**.
 
-Once configured, new and updated pull requests will trigger PRGuard AI to analyze the diff and post a summarized review comment with aggregated confidence.
+Once configured, new and updated pull requests will trigger PRGuard AI to analyze the diff, post a summarized review comment with aggregated confidence, and create inline comments for medium/high severity issues.
+
+### Local Demo
+
+To run a local demo of the review pipeline against a sample diff:
+
+```bash
+python scripts/demo_pr_review.py
+```
+
+This will print a Markdown report similar to what is posted back to GitHub.
+
+### Dashboard & Replay
+
+- **Replay API**: `GET /review/{pr_id}` returns the stored agent logs and confidence trace.
+- **Dashboard app**: run `uvicorn dashboard.app:app --reload` and open `http://localhost:8000/dashboard` to inspect timelines and per-agent outputs for a given `pr_id`.
 

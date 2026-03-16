@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -24,7 +23,20 @@ def _get_conn() -> sqlite3.Connection:
             finished_at REAL NOT NULL,
             confidence REAL,
             token_usage INTEGER,
+            execution_duration REAL,
+            agent_order INTEGER,
             payload TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS llm_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pr_id TEXT NOT NULL,
+            agent TEXT NOT NULL,
+            tokens_used INTEGER NOT NULL,
+            cost_estimate REAL NOT NULL
         )
         """
     )
@@ -38,13 +50,28 @@ def log_agent_execution(
     finished_at: float,
     output: Dict[str, Any],
     token_usage: int | None = None,
+    execution_duration: float | None = None,
+    agent_order: int | None = None,
 ) -> None:
     conn = _get_conn()
+    duration = execution_duration
+    if duration is None:
+        duration = max(0.0, float(finished_at - started_at))
     try:
         conn.execute(
             """
-            INSERT INTO agent_logs (pr_id, agent, started_at, finished_at, confidence, token_usage, payload)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO agent_logs (
+                pr_id,
+                agent,
+                started_at,
+                finished_at,
+                confidence,
+                token_usage,
+                execution_duration,
+                agent_order,
+                payload
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 str(pr_id),
@@ -53,8 +80,30 @@ def log_agent_execution(
                 finished_at,
                 float(output.get("confidence", 0.0)),
                 int(token_usage or 0),
+                float(duration),
+                int(agent_order or 0),
                 json.dumps(output),
             ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def log_llm_usage(
+    pr_id: str,
+    agent: str,
+    tokens_used: int,
+    cost_estimate: float,
+) -> None:
+    conn = _get_conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO llm_usage (pr_id, agent, tokens_used, cost_estimate)
+            VALUES (?, ?, ?, ?)
+            """,
+            (str(pr_id), agent, int(tokens_used), float(cost_estimate)),
         )
         conn.commit()
     finally:
@@ -65,7 +114,8 @@ def fetch_pr_logs(pr_id: str) -> List[Dict[str, Any]]:
     conn = _get_conn()
     try:
         cur = conn.execute(
-            "SELECT agent, started_at, finished_at, confidence, token_usage, payload "
+            "SELECT agent, started_at, finished_at, confidence, token_usage, "
+            "execution_duration, agent_order, payload "
             "FROM agent_logs WHERE pr_id = ? ORDER BY started_at",
             (str(pr_id),),
         )
@@ -74,7 +124,16 @@ def fetch_pr_logs(pr_id: str) -> List[Dict[str, Any]]:
         conn.close()
 
     logs: List[Dict[str, Any]] = []
-    for agent, started_at, finished_at, confidence, token_usage, payload in rows:
+    for (
+        agent,
+        started_at,
+        finished_at,
+        confidence,
+        token_usage,
+        execution_duration,
+        agent_order,
+        payload,
+    ) in rows:
         try:
             parsed = json.loads(payload)
         except json.JSONDecodeError:
@@ -86,11 +145,13 @@ def fetch_pr_logs(pr_id: str) -> List[Dict[str, Any]]:
                 "finished_at": finished_at,
                 "confidence": confidence,
                 "token_usage": token_usage,
+                "execution_duration": execution_duration,
+                "agent_order": agent_order,
                 "output": parsed,
             }
         )
     return logs
 
 
-__all__ = ["log_agent_execution", "fetch_pr_logs", "DB_PATH"]
+__all__ = ["log_agent_execution", "log_llm_usage", "fetch_pr_logs", "DB_PATH"]
 
