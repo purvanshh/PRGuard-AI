@@ -13,6 +13,7 @@ from config.settings import settings
 from observability.logging import log_llm_usage
 from observability.metrics import LLM_TOKENS_USED
 from observability.tracing import get_tracer
+from cost.budget_manager import add_usage, check_budget
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,13 @@ def generate_analysis(
     requested = min(max_tokens, MAX_TOKENS_PER_REQUEST)
     _check_and_update_budget(pr_id, requested)
 
+    # Repository-level cost budget check (per day).
+    repo_name: str | None = None
+    if pr_id and "#" in pr_id:
+        repo_name = pr_id.split("#", 1)[0]
+    if repo_name and not check_budget(repo_name):
+        raise RuntimeError("LLM cost budget exceeded")
+
     last_error: Exception | None = None
     with _TRACER.start_as_current_span("llm_call") as span:
         span.set_attribute("llm.model", model)
@@ -139,6 +147,7 @@ def generate_analysis(
                 span.set_attribute("llm.completion_tokens", completion_tokens)
                 span.set_attribute("llm.total_tokens", total_tokens)
 
+                estimated_cost = calculate_openai_cost(model, prompt_tokens, completion_tokens)
                 if pr_id:
                     log_llm_usage(
                         pr_id=pr_id,
@@ -146,8 +155,10 @@ def generate_analysis(
                         model=model,
                         prompt_tokens=prompt_tokens,
                         completion_tokens=completion_tokens,
-                        estimated_cost_usd=calculate_openai_cost(model, prompt_tokens, completion_tokens),
+                        estimated_cost_usd=estimated_cost,
                     )
+                if repo_name:
+                    add_usage(repo_name, estimated_cost)
                 LLM_TOKENS_USED.labels(agent="unknown", model=model).inc(total_tokens)
                 return message, meta
             except openai.error.RateLimitError as exc:  # type: ignore[attr-defined]

@@ -2,32 +2,19 @@
 
 from __future__ import annotations
 
-import logging
-import sys
-
 import uvicorn
 
-from config.settings import settings
 from github.webhook_server import app as webhook_app
 from observability.logging import _get_conn as _init_db  # type: ignore
 from observability.tracing import configure_tracing
+from observability.structured_logging import configure_structured_logging
 
 
 app = webhook_app
 
 
 def _configure_logging() -> None:
-    handler = logging.StreamHandler(stream=sys.stdout)
-    formatter = logging.Formatter(
-        fmt="%(asctime)s | agent=%(name)s | event=%(levelname)s | message=%(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
-    )
-    handler.setFormatter(formatter)
-
-    root = logging.getLogger()
-    root.setLevel(logging.INFO)
-    root.handlers.clear()
-    root.addHandler(handler)
+    configure_structured_logging()
 
 
 def startup() -> None:

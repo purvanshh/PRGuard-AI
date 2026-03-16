@@ -1,3 +1,20 @@
+[project]
+name = "prguard-ai"
+version = "0.1.0"
+description = "AI-powered multi-agent pull request review system"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["ai", "devtools", "code-review", "agents"]
+license = { text = "MIT" }
+authors = [
+  { name = "PRGuard AI Maintainers" }
+]
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
 [build-system]
 requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"

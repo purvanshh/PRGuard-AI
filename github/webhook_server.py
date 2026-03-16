@@ -21,7 +21,7 @@ from github.github_client import (
     post_pr_comment,
     post_inline_comment,
 )
-from observability.logging import fetch_pr_logs, log_agent_execution
+from observability.logging import fetch_pr_logs, log_agent_execution, _get_conn as _get_db_conn  # type: ignore
 from observability.event_stream import broker
 from observability.metrics import (
     TOTAL_PRS_PROCESSED,
@@ -37,6 +37,15 @@ from queue.task_queue import (
     run_security_agent,
     run_style_agent,
 )
+from queue.task_registry import (
+    acquire_global_slot,
+    complete_pr_processing,
+    is_pr_processing,
+    register_pr_processing,
+    release_global_slot,
+)
+from security.rate_limiter import check_installation_limit, check_repo_limit
+from queue.redis_client import get_redis
 from schemas.agent_output import AgentOutput
 
 logger = logging.getLogger(__name__)
@@ -87,16 +96,98 @@ async def get_raw_body(request: Request) -> bytes:
     return await request.body()
 
 
+def check_redis() -> str:
+    """Return 'connected' if Redis is reachable, otherwise 'disconnected'."""
+    try:
+        get_redis().ping()
+        return "connected"
+    except Exception:
+        return "disconnected"
+
+
+def check_database() -> str:
+    """Return 'connected' if the database is reachable, otherwise 'disconnected'."""
+    try:
+        conn = _get_db_conn()
+        try:
+            conn.execute("SELECT 1")
+        finally:
+            conn.close()
+        return "connected"
+    except Exception:
+        return "disconnected"
+
+
+def check_openai() -> str:
+    """Return 'configured' if OpenAI API key is set, otherwise 'missing'."""
+    return "configured" if bool(settings.openai_api_key) else "missing"
+
+
+def check_queue_depth() -> Dict[str, int]:
+    """Return queue depths for Celery queues."""
+    r = get_redis()
+    queues = ["style", "logic", "security", "arbitrator"]
+    depths: Dict[str, int] = {}
+    for name in queues:
+        try:
+            depths[name] = int(r.llen(name))
+        except Exception:
+            depths[name] = -1
+    return depths
+
+
 @app.post("/webhook")
 async def github_webhook(
     request: Request,
     x_github_event: str = Header(..., alias="X-GitHub-Event"),
     x_hub_signature_256: str | None = Header(None, alias="X-Hub-Signature-256"),
+    x_github_delivery: str = Header(..., alias="X-GitHub-Delivery"),
+    x_github_timestamp: str | None = Header(None, alias="X-GitHub-Timestamp"),
     raw_body: bytes = Depends(get_raw_body),
 ) -> Dict[str, Any]:
     """
     GitHub webhook endpoint.
     """
+    # 1. Payload size limit (5MB).
+    max_bytes = 5 * 1024 * 1024
+    if len(raw_body) > max_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={"error": "payload_too_large", "reason": "Webhook payload exceeds 5MB limit."},
+        )
+
+    # 2. Replay protection using X-GitHub-Delivery as a unique ID.
+    r = get_redis()
+    delivery_key = f"prguard:webhook:delivery:{x_github_delivery}"
+    if not r.setnx(delivery_key, "1"):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "replay_detected", "reason": "Duplicate delivery ID received."},
+        )
+    # TTL 5 minutes.
+    r.expire(delivery_key, 5 * 60)
+
+    # 3. Timestamp validation (reject requests older than 2 minutes).
+    if x_github_timestamp:
+        try:
+            ts = float(x_github_timestamp)
+            now = time.time()
+            age = now - ts
+            if age > 120 or age < -120:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "error": "stale_request",
+                        "reason": "Webhook timestamp is outside the allowed window.",
+                    },
+                )
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"error": "invalid_timestamp", "reason": "X-GitHub-Timestamp must be a UNIX epoch seconds value."},
+            )
+
+    # 4. Signature verification.
     verify_github_signature(raw_body, x_hub_signature_256, settings.github_webhook_secret)
 
     try:
@@ -114,6 +205,30 @@ async def github_webhook(
     repo = payload["repository"]["full_name"]
     pr_number = payload["number"]
     pr_id = f"{repo}#{pr_number}"
+    installation_id = int(payload.get("installation", {}).get("id", 0))
+
+    # Rate limiting per repo and installation.
+    if not check_repo_limit(repo):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="repo rate limit exceeded",
+        )
+    if installation_id and not check_installation_limit(installation_id):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="installation rate limit exceeded",
+        )
+
+    # Idempotency: skip if already processing this PR.
+    if is_pr_processing(pr_id):
+        return {"status": "ignored", "reason": "already_processing"}
+
+    # Global concurrency control.
+    if not acquire_global_slot():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="backpressure",
+        )
 
     with _TRACER.start_as_current_span("webhook_received") as span:
         span.set_attribute("pr.id", pr_id)
@@ -124,7 +239,13 @@ async def github_webhook(
         diff_text = get_pr_diff(repo_full_name=repo, pr_number=pr_number)
 
         sandbox_path: str | None = None
+        # Track whether we successfully registered this PR for processing.
+        registered = False
         try:
+            # Attempt to register this PR as in-flight.
+            registered = register_pr_processing(pr_id)
+            if not registered:
+                return {"status": "ignored", "reason": "already_processing"}
             try:
                 repo_url = payload.get("repository", {}).get("clone_url") or payload.get("repository", {}).get("html_url")
                 sandbox = clone_repository(repo_url=repo_url, pr_number=int(pr_number), repo_full_name=str(repo))
@@ -312,6 +433,9 @@ async def github_webhook(
         finally:
             if sandbox_path:
                 cleanup_repository(sandbox_path)
+            if registered:
+                complete_pr_processing(pr_id)
+            release_global_slot()
 
 
 @app.get("/review/{pr_id}")
@@ -326,16 +450,25 @@ async def get_review(pr_id: str) -> Dict[str, Any]:
 
 
 @app.get("/health")
-async def health() -> Dict[str, str]:
+async def health() -> Dict[str, Any]:
     """
-    Basic health check endpoint.
+    Extended health check endpoint.
     """
-    redis_status = "connected"
-    openai_status = "configured" if bool(settings.openai_api_key) else "missing"
+    redis_status = check_redis()
+    database_status = check_database()
+    openai_status = check_openai()
+    queue_depth = check_queue_depth()
+
+    overall = "ok"
+    if redis_status != "connected" or database_status != "connected" or openai_status != "configured":
+        overall = "degraded"
+
     return {
-        "status": "ok",
+        "status": overall,
         "redis": redis_status,
+        "database": database_status,
         "openai": openai_status,
+        "queue_depth": queue_depth,
     }
 
 
