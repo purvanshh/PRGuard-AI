@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+pydantic
+PyGithub
+celery
+redis
+tree-sitter
+chromadb
+openai
+pytest
+python-dotenv
+
