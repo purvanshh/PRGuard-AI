@@ -6,10 +6,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from analysis.ast_parser import AstSummary, summarize_source
-from analysis.diff_parser import DiffHunk, extract_context_lines, parse_diff
-from llm.client import generate_analysis
-from schemas.agent_output import AgentOutput, Issue
+from prguard_ai.analysis.ast_parser import AstSummary, summarize_source
+from prguard_ai.analysis.diff_parser import DiffHunk, extract_context_lines, parse_diff
+from prguard_ai.llm.client import generate_analysis
+from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
 PROMPT_PATH = Path("prompts/logic_prompt.txt")
 MAX_FILES_PER_PR = 50

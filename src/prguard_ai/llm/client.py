@@ -10,11 +10,11 @@ from typing import Any, Dict, Tuple
 
 import openai
 
-from config.settings import settings
-from observability.logging import log_llm_usage
-from observability.metrics import LLM_TOKENS_USED
-from observability.tracing import get_tracer
-from cost.budget_manager import add_usage, check_budget
+from prguard_ai.config.settings import settings
+from prguard_ai.observability.logging import log_llm_usage
+from prguard_ai.observability.metrics import LLM_TOKENS_USED
+from prguard_ai.observability.tracing import get_tracer
+from prguard_ai.cost.budget_manager import add_usage, check_budget
 
 logger = logging.getLogger(__name__)
 

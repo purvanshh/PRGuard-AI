@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Tuple
 
-from confidence.scoring_engine import aggregate_confidence, calculate_agent_confidence
-from schemas.agent_output import AgentOutput, Issue
-from schemas.pr_report import PullRequestReport
+from prguard_ai.confidence.scoring_engine import aggregate_confidence, calculate_agent_confidence
+from prguard_ai.schemas.agent_output import AgentOutput, Issue
+from prguard_ai.schemas.pr_report import PullRequestReport
 
 
 def detect_agent_disagreements(outputs: Iterable[AgentOutput]) -> List[str]:

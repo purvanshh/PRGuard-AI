@@ -7,8 +7,8 @@ from typing import Dict, List, Optional
 
 from github import Github
 
-from config.settings import settings
-from github.app_auth import get_installation_token
+from prguard_ai.config.settings import settings
+from prguard_ai.github.app_auth import get_installation_token
 
 logger = logging.getLogger(__name__)
 

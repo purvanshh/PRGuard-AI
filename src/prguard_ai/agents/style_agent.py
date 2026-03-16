@@ -6,10 +6,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from analysis.diff_parser import DiffHunk, extract_hunks, extract_changed_files, parse_diff
-from analysis.repo_indexer import retrieve_similar_code
-from llm.client import generate_analysis
-from schemas.agent_output import AgentOutput, Issue
+from prguard_ai.analysis.diff_parser import DiffHunk, extract_hunks, extract_changed_files, parse_diff
+from prguard_ai.analysis.repo_indexer import retrieve_similar_code
+from prguard_ai.llm.client import generate_analysis
+from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
 PROMPT_PATH = Path("prompts/style_prompt.txt")
 MAX_FILES_PER_PR = 50

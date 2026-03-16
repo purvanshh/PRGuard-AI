@@ -11,42 +11,42 @@ from typing import Any, Dict, List
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 
-from config.settings import settings
-from analysis.repo_indexer import initialize_repo_index
-from analysis.code_graph import build_code_graph
-from analysis.repo_sandbox import RepoSandboxError, cleanup_repository, clone_repository
-from github.github_client import (
+from prguard_ai.config.settings import settings
+from prguard_ai.analysis.repo_indexer import initialize_repo_index
+from prguard_ai.analysis.code_graph import build_code_graph
+from prguard_ai.analysis.repo_sandbox import RepoSandboxError, cleanup_repository, clone_repository
+from prguard_ai.github.github_client import (
     format_pr_review,
     get_pr_diff,
     post_pr_comment,
     post_inline_comment,
 )
-from observability.logging import fetch_pr_logs, log_agent_execution, _get_conn as _get_db_conn  # type: ignore
-from observability.event_stream import broker
-from observability.metrics import (
+from prguard_ai.observability.logging import fetch_pr_logs, log_agent_execution, _get_conn as _get_db_conn  # type: ignore
+from prguard_ai.observability.event_stream import broker
+from prguard_ai.observability.metrics import (
     TOTAL_PRS_PROCESSED,
     AGENT_EXECUTION_TIME,
     REVIEW_CONFIDENCE,
 )
-from observability.tracing import get_tracer
+from prguard_ai.observability.tracing import get_tracer
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from fastapi.responses import PlainTextResponse
-from task_queue.celery_app import (
+from prguard_ai.task_queue.celery_app import (
     run_arbitrator,
     run_logic_agent,
     run_security_agent,
     run_style_agent,
 )
-from task_queue.task_registry import (
+from prguard_ai.task_queue.task_registry import (
     acquire_global_slot,
     complete_pr_processing,
     is_pr_processing,
     register_pr_processing,
     release_global_slot,
 )
-from security.rate_limiter import check_installation_limit, check_repo_limit
-from task_queue.redis_client import get_redis
-from schemas.agent_output import AgentOutput
+from prguard_ai.security.rate_limiter import check_installation_limit, check_repo_limit
+from prguard_ai.task_queue.redis_client import get_redis
+from prguard_ai.schemas.agent_output import AgentOutput
 
 logger = logging.getLogger(__name__)
 _TRACER = get_tracer("webhook")

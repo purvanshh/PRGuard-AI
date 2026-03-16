@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Tuple
 
-from agents.logic_agent import analyze_logic
-from agents.security_agent import analyze_security
-from agents.style_agent import analyze_style
-from agents.arbitrator_agent import arbitrate_confidence
-from schemas.agent_output import AgentOutput
+from prguard_ai.agents.logic_agent import analyze_logic
+from prguard_ai.agents.security_agent import analyze_security
+from prguard_ai.agents.style_agent import analyze_style
+from prguard_ai.agents.arbitrator_agent import arbitrate_confidence
+from prguard_ai.schemas.agent_output import AgentOutput
 
 
 def _normalize_issue(issue: Dict[str, Any]) -> Tuple[int, str]:

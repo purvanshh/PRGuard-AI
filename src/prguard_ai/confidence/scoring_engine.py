@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Iterable, Dict
 
-from schemas.agent_output import AgentOutput, Issue
+from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
 
 CONFIDENCE_WEIGHTS: Dict[str, float] = {

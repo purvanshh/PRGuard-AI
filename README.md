@@ -1,178 +1,362 @@
-## PRGuard AI
+<![CDATA[<div align="center">
 
-**Author**: purvansh ([`@purvanshh`](https://github.com/purvanshh))
+# 🛡️ PRGuard AI
 
-PRGuard AI is an AI-powered multi-agent review system for GitHub pull requests. It automatically analyzes changes for **style consistency**, **logical correctness**, and **security vulnerabilities**, then aggregates findings into a single, actionable review comment.
+**Multi-agent pull request review system that catches what humans miss.**
 
-### Architecture Overview
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![Celery](https://img.shields.io/badge/Celery-5.x-37814A?logo=celery&logoColor=white)](https://docs.celeryq.dev)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://docker.com)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![CI](https://github.com/purvanshh/PRGuard-AI/actions/workflows/ci.yml/badge.svg)](https://github.com/purvanshh/PRGuard-AI/actions)
 
-- **GitHub Webhook**: GitHub sends `pull_request` events to the FastAPI webhook endpoint.
-- **FastAPI Server**: Validates the webhook signature, fetches the PR diff, and enqueues Celery tasks.
-- **Analysis Agents**:
-  - **Style agent**: Flags formatting and consistency issues.
-  - **Logic agent**: Highlights potential logical errors.
-  - **Security agent**: Detects obviously unsafe patterns.
-- **Confidence Engine**: Aggregates per-agent outputs into an overall confidence score.
-- **GitHub Client**: Posts a summarized review comment back to the pull request.
-- **Celery + Redis**: Handles task execution for each agent.
-- **ChromaDB + tree-sitter**: Provide the foundation for semantic and structural code analysis.
+</div>
 
-#### High-Level Diagram
+---
 
-```text
-GitHub PR Event
-        |
-        v
-  FastAPI /webhook
-        |
-        v
-   Celery Tasks  ----> Style Agent
-        |             Logic Agent
-        |             Security Agent
-        v
-  Confidence Arbitrator
-        |
-        v
- Summary Comment + Inline Comments
-        |
-        v
- Replay Logs & Dashboard
+PRGuard AI hooks into GitHub via webhooks and runs three independent analysis agents — **Style**, **Logic**, and **Security** — in parallel on every pull request. Each agent combines deterministic rule-based checks with LLM reasoning, then a Confidence Arbitrator aggregates findings, detects inter-agent disagreements, assigns traceable confidence scores, and posts a structured review comment back to the PR. The entire pipeline executes asynchronously through Celery + Redis with retry logic, HMAC signature verification, replay protection, rate limiting, and full audit logging.
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                            GitHub (PR opened/updated)                       │
+└─────────────────────┬───────────────────────────────────────────────────────┘
+                      │ webhook (POST /webhook)
+                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  FastAPI Server                                                             │
+│  ┌───────────────┐  ┌──────────────┐  ┌─────────────┐  ┌────────────────┐  │
+│  │ HMAC Sig      │→ │ Replay       │→ │ Timestamp   │→ │ Rate Limiter   │  │
+│  │ Verification  │  │ Protection   │  │ Validation  │  │ (repo + inst.) │  │
+│  └───────────────┘  └──────────────┘  └─────────────┘  └────────────────┘  │
+│                                                                             │
+│  ┌───────────────┐  ┌──────────────┐                                        │
+│  │ Repo Clone &  │→ │ ChromaDB     │  (index repo style patterns)           │
+│  │ Sandbox       │  │ Indexing     │                                        │
+│  └───────────────┘  └──────────────┘                                        │
+└─────────────────────┬───────────────────────────────────────────────────────┘
+                      │ enqueue Celery tasks
+                      ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│  Celery + Redis Task Queue                                                  │
+│                                                                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                      │
+│  │ Style Agent  │  │ Logic Agent  │  │ Security     │   (parallel, each    │
+│  │              │  │              │  │ Agent        │    on dedicated queue)│
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘                      │
+│         └──────────────────┼──────────────────┘                             │
+│                            ▼                                                │
+│              ┌──────────────────────┐                                       │
+│              │ Confidence           │                                       │
+│              │ Arbitrator           │                                       │
+│              └──────────┬───────────┘                                       │
+└─────────────────────────┼───────────────────────────────────────────────────┘
+                          │
+           ┌──────────────┼──────────────┐
+           ▼              ▼              ▼
+     ┌──────────┐  ┌──────────────┐  ┌──────────────┐
+     │ PR       │  │ Inline       │  │ Audit Log    │
+     │ Comment  │  │ Comments     │  │ (SQLite)     │
+     └──────────┘  └──────────────┘  └──────────────┘
 ```
 
-### Setup Instructions
+## Example PR Comment
 
-#### 1. Clone the repository
+When PRGuard AI finishes analyzing a pull request, it posts a comment like this:
 
-```bash
-git clone <your-repo-url> prguard-ai-repo
-cd prguard-ai-repo/prguard-ai
+```markdown
+## PRGuard AI Review
+
+**Confidence Score:** 0.74
+
+### Style
+- `MEDIUM` (line 15): Tab character used for indentation instead of spaces.
+- `LOW` (line 88): Line exceeds 120 characters.
+
+### Logic
+- `MEDIUM` (line 42): Bare except detected; this can hide runtime errors.
+- `LOW` (line 67): TODO present in newly added code.
+
+### Security
+- `HIGH` (line 23): Potential SQL injection pattern (string-concatenated query).
+- `HIGH` (line 91): Possible hardcoded secret or API key.
+
+### Disagreement Summary
+- security reports high-severity issues while style does not.
 ```
 
-#### 2. Create and configure environment
+Medium and high-severity issues also get posted as **inline comments** on the specific lines in the PR diff (up to 10 per review).
 
-Copy the example environment file and set your secrets:
+## Agent Breakdown
+
+Each agent runs as an independent Celery task on a dedicated queue with automatic retry (`autoretry_for=(Exception,)`, `retry_backoff=True`, `max_retries=1`).
+
+### Style Agent
+
+Checks for consistency with repository conventions using a two-pass approach:
+
+| Pass | Method | What It Catches |
+|------|--------|-----------------|
+| **Rule-based** | Deterministic string matching | Tab indentation, lines > 120 chars |
+| **LLM-guided** | Prompt + repo style examples from ChromaDB | Naming conventions, file structure, docstring consistency |
+
+The style agent retrieves similar code from the repo's ChromaDB index (`repo_indexer.retrieve_similar_code`) to give the LLM actual examples of the project's conventions.
+
+### Logic Agent
+
+Detects logical defects using AST analysis and contextual reasoning:
+
+| Pass | Method | What It Catches |
+|------|--------|-----------------|
+| **Rule-based** | Pattern matching on added lines | Bare `except:`, unresolved `TODO`s |
+| **AST-informed** | `tree-sitter` parse → function/variable/control-flow summary | Function structure, variable usage, control flow patterns |
+| **LLM-guided** | Prompt + AST summary + surrounding context | Off-by-one errors, null handling, boundary conditions, unhandled exceptions |
+
+The logic agent builds an AST summary (`analysis/ast_parser.py`) of changed code and feeds it alongside surrounding context lines to the LLM for deeper reasoning.
+
+### Security Agent
+
+Detects vulnerabilities using both pattern matching and LLM analysis:
+
+| Pass | Method | What It Catches |
+|------|--------|-----------------|
+| **Rule-based** | Regex/string detection functions | `eval()`/`exec()` usage, SQL injection patterns (string-concatenated queries), hardcoded secrets/API keys |
+| **LLM-guided** | Security-focused prompt | Command injection, unsafe deserialization, privilege escalation, SSRF, path traversal |
+
+Each rule-based detection function (`detect_sql_injection`, `detect_eval_usage`, `detect_hardcoded_secrets`) is individually exported and testable.
+
+## Confidence Scoring
+
+Every finding carries a `confidence_source` tag that maps to a numeric weight:
+
+| Source | Weight | Meaning |
+|--------|--------|---------|
+| `rule_based` | **0.9** | Deterministic pattern match — high certainty |
+| `llm_reasoning` | **0.6** | LLM-generated finding — moderate certainty |
+| `inferred` | **0.3** | Heuristic or indirect signal — low certainty |
+
+**Per-agent scoring:** An agent's base confidence is blended with the average weight of its issues: `refined = (base_confidence + avg_issue_weight) / 2`, clamped to `[0.0, 1.0]`.
+
+**Aggregate scoring:** Agent scores are averaged, with a +0.1 boost (capped at 1.0) if any high-severity issue exists across all agents — because high-severity findings should increase overall review attention.
+
+**Disagreement detection:** The arbitrator compares severity distributions across agents. If one agent reports high-severity issues and another doesn't, this is flagged in the review.
+
+## Setup
+
+### Prerequisites
+
+- Python 3.11+
+- Docker & Docker Compose
+- A GitHub account with a repository to monitor
+- OpenAI API key
+
+### Docker (Recommended)
 
 ```bash
+# Clone the repo
+git clone https://github.com/purvanshh/PRGuard-AI.git
+cd PRGuard-AI
+
+# Configure environment
 cp .env.example .env
+# Edit .env with your keys (see Environment Variables below)
+
+# Start everything
+docker compose up --build
 ```
 
-Set at minimum:
+This starts three containers:
+- **prguard-api** — FastAPI server on port `8000`
+- **prguard-worker** — Celery worker processing agent tasks
+- **prguard-redis** — Redis 7 as message broker + result backend
 
-- `OPENAI_API_KEY`
-- `GITHUB_APP_ID`
-- `GITHUB_APP_PRIVATE_KEY` (PEM string or path)
-- `GITHUB_APP_INSTALLATION_ID`
-- `GITHUB_WEBHOOK_SECRET`
-- `REDIS_URL` (optional, defaults to `redis://redis:6379/0`)
-
-#### 3. Install dependencies (local development)
+### Local Development
 
 ```bash
+# Clone and install
+git clone https://github.com/purvanshh/PRGuard-AI.git
+cd PRGuard-AI
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+
+# Configure environment
+cp .env.example .env
+# Edit .env with your keys
+
+# Start Redis (required)
+docker run -d -p 6379:6379 redis:7
+
+# Start the Celery worker
+celery -A task_queue.celery_app.celery_app worker --loglevel=INFO --concurrency=1
+
+# In a separate terminal, start the API server
+python main.py
 ```
 
-#### 4. Run tests
+The server runs on `http://localhost:8000`.
+
+### Running Tests
 
 ```bash
-pytest
+pytest tests/ -v
 ```
 
-### Running with Docker Compose (dev)
+Tests cover diff parsing, agent outputs, scoring engine calculations, and the full pipeline.
 
-From the `prguard-ai` directory:
+## GitHub Webhook Configuration
 
+1. Go to your repository → **Settings** → **Webhooks** → **Add webhook**
+
+2. Configure the webhook:
+   | Field | Value |
+   |-------|-------|
+   | **Payload URL** | `https://your-server.com/webhook` |
+   | **Content type** | `application/json` |
+   | **Secret** | Same value as `GITHUB_WEBHOOK_SECRET` in your `.env` |
+   | **Events** | Select **Pull requests** only |
+   | **Active** | ✅ Checked |
+
+3. PRGuard AI responds to these PR actions: `opened`, `synchronize`, `ready_for_review`
+
+4. For local development, use a tunnel like [ngrok](https://ngrok.com):
+   ```bash
+   ngrok http 8000
+   ```
+   Then use the generated `https://*.ngrok.io/webhook` URL as your Payload URL.
+
+### GitHub App Authentication (Optional)
+
+PRGuard AI supports GitHub App authentication for fine-grained permissions. Set these additional environment variables:
+
+```env
+GITHUB_APP_ID=your_app_id
+GITHUB_APP_INSTALLATION_ID=your_installation_id
+GITHUB_APP_PRIVATE_KEY=/path/to/private-key.pem  # or inline PEM string
+```
+
+The client falls back to `GITHUB_TOKEN` (personal access token) if App auth is not configured.
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `OPENAI_API_KEY` | Yes | — | OpenAI API key for LLM-powered analysis |
+| `GITHUB_TOKEN` | Yes* | — | GitHub PAT for PR access (fallback if App auth not configured) |
+| `GITHUB_WEBHOOK_SECRET` | Yes | — | Shared secret for HMAC signature verification |
+| `REDIS_URL` | No | `redis://redis:6379/0` | Redis connection URL for Celery broker |
+| `CHROMA_PERSIST_DIR` | No | `.chroma` | Directory for ChromaDB vector index persistence |
+| `GITHUB_APP_ID` | No | — | GitHub App ID (for App-based auth) |
+| `GITHUB_APP_INSTALLATION_ID` | No | — | GitHub App installation ID |
+| `GITHUB_APP_PRIVATE_KEY` | No | — | PEM key string or file path |
+
+*\*Required unless GitHub App auth is configured.*
+
+Reference: [`.env.example`](.env.example)
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/webhook` | GitHub webhook receiver (HMAC-verified) |
+| `GET` | `/review/{pr_id}` | Replay endpoint — returns agent outputs and analysis trace |
+| `GET` | `/health` | Extended health check (Redis, DB, OpenAI, queue depths) |
+| `GET` | `/metrics` | Prometheus metrics (PRs processed, agent latency, confidence distribution) |
+| `WS` | `/stream/{pr_id}` | WebSocket endpoint for live agent progress events |
+
+## Repository Structure
+
+```
+prguard-ai/
+├── agents/                  # Analysis agents (style, logic, security, arbitrator)
+├── analysis/                # Diff parsing, AST analysis, repo indexing, code graph, sandboxing
+├── confidence/              # Scoring engine with weighted confidence calibration
+├── config/                  # Pydantic-based settings (env-driven)
+├── cost/                    # LLM budget manager and token tracking
+├── dashboard/               # Optional web dashboard
+├── db/                      # Database layer
+├── deploy/                  # Production docker-compose + Prometheus config
+├── docs/                    # Architecture docs, example reviews, runbook
+├── evaluation/              # Evaluation framework with precision/recall metrics
+├── fixtures/                # Test fixtures and sample data
+├── github/                  # Webhook server, GitHub API client, App auth
+├── llm/                     # OpenAI client wrapper with token budgeting
+├── observability/           # Structured logging, OpenTelemetry tracing, Prometheus metrics, event streaming
+├── prompts/                 # Agent prompt templates (style, logic, security)
+├── queue/                   # Redis client utilities and legacy task queue
+├── reliability/             # Reliability patterns (circuit breakers, etc.)
+├── schemas/                 # Pydantic models (AgentOutput, Issue, PullRequestReport)
+├── scripts/                 # Utility scripts
+├── security/                # Rate limiter (per-repo + per-installation)
+├── task_queue/              # Celery app, task definitions, task registry, Redis client
+├── tests/                   # Unit and integration tests
+├── .github/workflows/       # CI/CD pipeline (GitHub Actions)
+├── main.py                  # Application entrypoint
+├── Dockerfile               # Python 3.11-slim container image
+├── docker-compose.yml       # Multi-service orchestration (API + worker + Redis)
+├── requirements.txt         # Python dependencies
+└── .env.example             # Environment variable template
+```
+
+## Evaluation Methodology
+
+PRGuard AI includes an evaluation framework (`evaluation/evaluator.py`) that benchmarks agent accuracy against labeled datasets:
+
+1. **Dataset**: Hand-annotated PR diffs in `evaluation/dataset/` with expected issues (line number + message pairs)
+2. **Pipeline**: Each diff is run through all three agents → arbitrator → produces detected issue set
+3. **Metrics**: Standard information-retrieval metrics computed against the expected set:
+   - **True Positives** — correctly detected issues
+   - **False Positives** — spurious findings
+   - **Missed Issues** — expected issues not caught
+   - **Precision** — `TP / (TP + FP)`
+   - **Recall** — `TP / (TP + FN)`
+   - **Confidence** — arbitrator's aggregated confidence score
+
+Run evaluation:
 ```bash
-docker-compose up --build
+python -c "from evaluation.evaluator import evaluate_pr; print(evaluate_pr(open('evaluation/dataset/example_1.json').read()))"
 ```
 
-This will start:
+## Security Measures
 
-- `api`: FastAPI webhook server exposed on port `8000`.
-- `worker`: Celery worker processing analysis tasks.
-- `redis`: Redis instance used as both broker and backend.
+- **HMAC-SHA256 verification** on every webhook payload
+- **Replay protection** via `X-GitHub-Delivery` deduplication (Redis-backed, 5-min TTL)
+- **Timestamp validation** rejecting requests older than 2 minutes
+- **Payload size limit** of 5 MB
+- **Rate limiting** per repository and per GitHub App installation
+- **Global concurrency control** preventing worker saturation
+- **Sandboxed repo clones** with cleanup on completion
+- **No secrets in logs** — structured logging with sanitized output
 
-### Configuring the GitHub Webhook
+## Roadmap
 
-1. In your GitHub repository, go to **Settings → Webhooks**.
-2. Click **Add webhook**.
-3. Set:
-   - **Payload URL**: `http://<your-public-host>/webhook`
-   - **Content type**: `application/json`
-   - **Secret**: must match `GITHUB_WEBHOOK_SECRET` in your `.env`.
-4. Under **Which events would you like to trigger this webhook?**
-   - Select **Let me select individual events**.
-   - Enable **Pull requests**.
-5. Click **Add webhook**.
+- [ ] **Multi-language support** — extend tree-sitter parsing beyond Python (Go, TypeScript, Rust)
+- [ ] **Custom rule configuration** — per-repo `.prguard.yml` for tuning agent thresholds
+- [ ] **GitHub App Marketplace listing** — one-click install for any repository
+- [ ] **PR review suggestions** — use GitHub's suggestion API for auto-fixable issues
+- [ ] **Fine-tuned models** — domain-specific fine-tuning on labeled PR review data
+- [ ] **Incremental review** — only re-analyze changed files on `synchronize` events
+- [ ] **Dashboard v2** — real-time review progress, historical analytics, cost tracking
+- [ ] **Slack/Discord notifications** — alert channels on high-severity findings
+- [ ] **Self-hosted LLM support** — Ollama/vLLM backends for air-gapped deployments
 
-Once configured, new and updated pull requests will trigger PRGuard AI to analyze the diff, post a summarized review comment with aggregated confidence, and create inline comments for medium/high severity issues.
+## Contributing
 
-### Local Demo
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
-To run a local demo of the review pipeline against a sample diff:
+## License
 
-```bash
-python scripts/demo_pr_review.py
-```
+[MIT](LICENSE)
 
-This will print a Markdown report similar to what is posted back to GitHub.
+---
 
-### Dashboard, Live View & Replay
+<div align="center">
 
-- **Replay API**: `GET /review/{pr_id}` returns the stored agent logs and confidence trace.
-- **Dashboard app**: run `uvicorn dashboard.app:app --reload` and open `http://localhost:8000/dashboard` to inspect timelines and per-agent outputs for a given `pr_id`.
-- **Live view**: open `/live/{pr_id}` to see real-time agent start/finish events and confidence updates via WebSocket.
+Built by [Purvansh Sahu](https://github.com/purvanshh) · 3rd Year CS @ Scaler School of Technology + BITS Pilani · ML Research Intern @ IIT Madras
 
-### Evaluation & Benchmarking
-
-An evaluation framework and demo dataset live under `evaluation/`:
-
-- Dataset: `evaluation/dataset/*.json` (at least 5 labeled PR examples).
-- Runner: `scripts/run_benchmark.py`
-- Report: `evaluation/report.md` (generated).
-
-Run:
-
-```bash
-python scripts/run_benchmark.py
-```
-
-This will compute **precision**, **recall**, **F1 score**, and **average confidence**, then write a Markdown report to `evaluation/report.md`.
-
-### Production Deployment
-
-For a full production-style stack (API, worker, Redis, Prometheus, Grafana):
-
-```bash
-docker compose -f deploy/docker-compose.prod.yml up -d --build
-```
-
-Exposed services:
-
-- API: `http://localhost:8000`
-- Prometheus: `http://localhost:9090`
-- Grafana: `http://localhost:3000` (default admin/admin)
-
-Grafana can be configured to visualize:
-
-- Review throughput (PRs processed per minute)
-- Agent latency (per-agent execution histograms)
-- LLM token usage and estimated cost
-
-### End-to-End Demo Script
-
-For a quick portfolio/demo run:
-
-```bash
-chmod +x scripts/run_demo.sh
-./scripts/run_demo.sh
-```
-
-This will:
-
-- Start the production Docker stack.
-- Simulate a PR webhook via `scripts/test_webhook.py`.
-- Run the benchmark suite.
-- Print URLs for the API, dashboard, Prometheus, and Grafana.
-
+</div>
+]]>

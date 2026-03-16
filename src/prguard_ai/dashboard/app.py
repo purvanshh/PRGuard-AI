@@ -9,8 +9,8 @@ import json
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 
-from observability.logging import fetch_pr_logs
-from evaluation.evaluator import evaluate_pr
+from prguard_ai.observability.logging import fetch_pr_logs
+from prguard_ai.evaluation.evaluator import evaluate_pr
 
 
 app = FastAPI(title="PRGuard AI Dashboard", version="0.1.0")

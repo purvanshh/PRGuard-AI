@@ -7,14 +7,14 @@ from typing import Any, Dict, Iterable, List
 
 from celery import Celery
 
-from agents.arbitrator_agent import arbitrate_confidence
-from agents.logic_agent import analyze_logic
-from agents.security_agent import analyze_security
-from agents.style_agent import analyze_style
-from config.settings import settings
-from schemas.agent_output import AgentOutput
-from schemas.pr_report import PullRequestReport
-from observability.tracing import get_tracer
+from prguard_ai.agents.arbitrator_agent import arbitrate_confidence
+from prguard_ai.agents.logic_agent import analyze_logic
+from prguard_ai.agents.security_agent import analyze_security
+from prguard_ai.agents.style_agent import analyze_style
+from prguard_ai.config.settings import settings
+from prguard_ai.schemas.agent_output import AgentOutput
+from prguard_ai.schemas.pr_report import PullRequestReport
+from prguard_ai.observability.tracing import get_tracer
 
 
 CELERY_BROKER_URL = settings.redis_url or os.getenv("REDIS_URL", "redis://redis:6379/0")

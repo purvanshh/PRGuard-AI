@@ -24,21 +24,7 @@ observability = [
 ]
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = [
-  "agents*",
-  "analysis*",
-  "cache*",
-  "config*",
-  "confidence*",
-  "cost*",
-  "dashboard*",
-  "db*",
-  "evaluation*",
-  "github*",
-  "llm*",
-  "observability*",
-  "task_queue*",
-  "reliability*",
-  "security*",
-  "schemas*"
+  "prguard_ai*",
 ]

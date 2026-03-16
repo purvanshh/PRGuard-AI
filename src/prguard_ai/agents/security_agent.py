@@ -6,9 +6,9 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from analysis.diff_parser import DiffHunk, parse_diff
-from llm.client import generate_analysis
-from schemas.agent_output import AgentOutput, Issue
+from prguard_ai.analysis.diff_parser import DiffHunk, parse_diff
+from prguard_ai.llm.client import generate_analysis
+from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
 PROMPT_PATH = Path("prompts/security_prompt.txt")
 MAX_FILES_PER_PR = 50
