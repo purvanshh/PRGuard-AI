@@ -1,6 +1,7 @@
 fastapi
 uvicorn
-pydantic
+pydantic>=2,<3
+pydantic-settings>=2,<3
 PyGithub
 celery
 redis

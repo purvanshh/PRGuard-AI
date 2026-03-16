@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import ast
+
 from tree_sitter import Language, Parser, Node
 
 
@@ -150,13 +152,59 @@ def extract_control_structures(ast_root: Node, source: str) -> List[Dict[str, An
 def summarize_source(source: str, parser: Optional[Parser] = None) -> AstSummary:
     """
     Produce a concise AST-based summary of Python source code.
+
+    Prefers tree-sitter when available, but falls back to the built-in `ast`
+    module when tree-sitter or its compiled grammars are unavailable or
+    incompatible with the current Python version.
     """
-    root = parse_ast(source, parser=parser)
-    return AstSummary(
-        functions=extract_function_definitions(root, source),
-        variables=extract_variable_names(root, source),
-        control_structures=extract_control_structures(root, source),
-    )
+    try:
+        root = parse_ast(source, parser=parser)
+        return AstSummary(
+            functions=extract_function_definitions(root, source),
+            variables=extract_variable_names(root, source),
+            control_structures=extract_control_structures(root, source),
+        )
+    except Exception:
+        # Fallback: basic structural summary using Python's stdlib `ast`.
+        try:
+            py_tree = ast.parse(source)
+        except SyntaxError:
+            # If the snippet is not valid Python (e.g. raw diff context),
+            # return an empty but well-formed summary so callers can proceed.
+            return AstSummary(functions=[], variables=[], control_structures=[])
+
+        functions: List[Dict[str, Any]] = []
+        variables: List[str] = []
+        controls: List[Dict[str, Any]] = []
+
+        for node in ast.walk(py_tree):
+            if isinstance(node, ast.FunctionDef):
+                params = [arg.arg for arg in node.args.args]
+                functions.append(
+                    {
+                        "name": node.name,
+                        "start_line": getattr(node, "lineno", 1),
+                        "end_line": getattr(node, "end_lineno", getattr(node, "lineno", 1)),
+                        "parameters": params,
+                    }
+                )
+            elif isinstance(node, ast.Name):
+                variables.append(node.id)
+            elif isinstance(node, (ast.If, ast.For, ast.While, ast.Try, ast.With)):
+                controls.append(
+                    {
+                        "type": type(node).__name__.lower(),
+                        "start_line": getattr(node, "lineno", 1),
+                        "end_line": getattr(node, "end_lineno", getattr(node, "lineno", 1)),
+                        "text": "",  # omitted in fallback
+                    }
+                )
+
+        return AstSummary(
+            functions=functions,
+            variables=sorted(set(variables)),
+            control_structures=controls,
+        )
 
 
 def summarize_file(path: str | Path, parser: Optional[Parser] = None) -> AstSummary:

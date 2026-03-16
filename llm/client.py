@@ -56,8 +56,22 @@ def generate_analysis(
     """
     Call the OpenAI API with retry and basic rate-limit handling.
 
-    Enforces per-request and per-PR token budgets.
+    Enforces per-request and per-PR token budgets. When `OPENAI_API_KEY` is not
+    configured (e.g. in local or CI test runs), this returns a deterministic
+    stub response instead of calling the external API.
     """
+    if not settings.openai_api_key:
+        logger.warning("OPENAI_API_KEY not set; returning offline stub response from generate_analysis.")
+        meta: Dict[str, Any] = {
+            "model": "offline-stub",
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "pr_id": pr_id,
+        }
+        # Agents expect JSON; an empty list means "no issues".
+        return "[]", meta
+
     _configure_openai()
 
     requested = min(max_tokens, MAX_TOKENS_PER_REQUEST)
