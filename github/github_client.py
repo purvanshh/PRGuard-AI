@@ -44,6 +44,51 @@ def get_pr_diff(
     return diff.diff
 
 
+def format_pr_review(report: dict) -> str:
+    """
+    Format a PR review comment in Markdown from a PullRequestReport-like dict.
+    """
+    lines = []
+    lines.append("## PRGuard AI Review")
+    lines.append("")
+    lines.append(f"**Confidence Score:** {report.get('overall_confidence', 0.0):.2f}")
+    lines.append("")
+
+    # Group issues by agent.
+    agent_sections: Dict[str, List[dict]] = {"style": [], "logic": [], "security": []}
+    for output in report.get("agent_outputs", []):
+        agent_name = output.get("agent", "").lower()
+        if agent_name in agent_sections:
+            agent_sections[agent_name].extend(output.get("issues", []))
+
+    def _render_section(title: str, issues: List[dict]) -> None:
+        lines.append(f"### {title}")
+        if not issues:
+            lines.append("_No issues detected._")
+        else:
+            for issue in issues:
+                lines.append(
+                    f"- `{issue.get('severity', '').upper()}` "
+                    f"(line {issue.get('line')}): {issue.get('message')}"
+                )
+        lines.append("")
+
+    _render_section("Style", agent_sections["style"])
+    _render_section("Logic", agent_sections["logic"])
+    _render_section("Security", agent_sections["security"])
+
+    # Disagreement summary (if present).
+    disagreements = report.get("disagreements") or []
+    lines.append("### Disagreement Summary")
+    if disagreements:
+        for d in disagreements:
+            lines.append(f"- {d}")
+    else:
+        lines.append("_No major disagreements detected between agents._")
+
+    return "\n".join(lines)
+
+
 def post_pr_comment(
     repo_full_name: str,
     pr_number: int,
@@ -66,5 +111,5 @@ def post_pr_comment(
     pr.create_issue_comment(body)
 
 
-__all__ = ["get_pr_diff", "post_pr_comment"]
+__all__ = ["get_pr_diff", "post_pr_comment", "format_pr_review"]
 

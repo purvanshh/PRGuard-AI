@@ -6,14 +6,20 @@ import hashlib
 import hmac
 import json
 import logging
-from typing import Any, Dict
+import time
+from typing import Any, Dict, List
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
 from config.settings import settings
-from github.github_client import get_pr_diff, post_pr_comment
-from queue.task_queue import run_style_agent, run_logic_agent, run_security_agent
-from agents.arbitrator_agent import arbitrate_confidence
+from github.github_client import format_pr_review, get_pr_diff, post_pr_comment
+from observability.logging import fetch_pr_logs, log_agent_execution
+from queue.task_queue import (
+    run_arbitrator,
+    run_logic_agent,
+    run_security_agent,
+    run_style_agent,
+)
 from schemas.agent_output import AgentOutput
 
 logger = logging.getLogger(__name__)
@@ -28,8 +34,6 @@ def verify_github_signature(
 ) -> None:
     """
     Verify the GitHub webhook payload signature.
-
-    GitHub sends the HMAC hexdigest signature in the X-Hub-Signature-256 header.
     """
     if not signature_header:
         raise HTTPException(
@@ -74,9 +78,6 @@ async def github_webhook(
 ) -> Dict[str, Any]:
     """
     GitHub webhook endpoint.
-
-    Verifies the payload signature, parses pull request events, then enqueues
-    Celery jobs to run analysis agents.
     """
     verify_github_signature(raw_body, x_hub_signature_256, settings.github_webhook_secret)
 
@@ -94,6 +95,7 @@ async def github_webhook(
 
     repo = payload["repository"]["full_name"]
     pr_number = payload["number"]
+    pr_id = f"{repo}#{pr_number}"
 
     diff_text = get_pr_diff(repo_full_name=repo, pr_number=pr_number)
 
@@ -103,48 +105,58 @@ async def github_webhook(
         "action": action,
     }
 
-    # Enqueue Celery tasks (synchronously wait for result in this minimal implementation).
+    # Enqueue Celery tasks and wait for completion (tasks execute in parallel).
+    style_started = time.time()
     style_result = run_style_agent.delay(diff_text, repo_metadata)
+    logic_started = time.time()
     logic_result = run_logic_agent.delay(diff_text, repo_metadata)
+    security_started = time.time()
     security_result = run_security_agent.delay(diff_text, repo_metadata)
 
-    style_output = AgentOutput(**style_result.get(timeout=30))
-    logic_output = AgentOutput(**logic_result.get(timeout=30))
-    security_output = AgentOutput(**security_result.get(timeout=30))
+    style_output_dict = style_result.get(timeout=60)
+    style_finished = time.time()
+    logic_output_dict = logic_result.get(timeout=60)
+    logic_finished = time.time()
+    security_output_dict = security_result.get(timeout=60)
+    security_finished = time.time()
 
-    report = arbitrate_confidence([style_output, logic_output, security_output])
+    style_output = AgentOutput(**style_output_dict)
+    logic_output = AgentOutput(**logic_output_dict)
+    security_output = AgentOutput(**security_output_dict)
 
-    comment_body = _format_report_comment(report.dict())
+    # Log agent executions (token usage is captured inside each agent's call to LLM).
+    log_agent_execution(pr_id, "style", style_started, style_finished, style_output_dict)
+    log_agent_execution(pr_id, "logic", logic_started, logic_finished, logic_output_dict)
+    log_agent_execution(pr_id, "security", security_started, security_finished, security_output_dict)
+
+    # Run arbitrator as a Celery task.
+    arb_started = time.time()
+    arb_result = run_arbitrator.delay(
+        [
+            style_output_dict,
+            logic_output_dict,
+            security_output_dict,
+        ]
+    )
+    arb_output = arb_result.get(timeout=60)
+    arb_finished = time.time()
+    log_agent_execution(pr_id, "arbitrator", arb_started, arb_finished, arb_output)
+
+    comment_body = format_pr_review(arb_output)
     post_pr_comment(repo_full_name=repo, pr_number=pr_number, body=comment_body)
 
-    return {"status": "ok", "overall_confidence": report.overall_confidence}
+    return {"status": "ok", "overall_confidence": arb_output.get("overall_confidence", 0.0)}
 
 
-def _format_report_comment(report: Dict[str, Any]) -> str:
+@app.get("/review/{pr_id}")
+async def get_review(pr_id: str) -> Dict[str, Any]:
     """
-    Format a human-readable PR comment from a PullRequestReport-like dict.
-
-    This is intentionally simple and can be replaced with a richer template later.
+    Replay endpoint returning agent outputs and analysis trace for a PR.
     """
-    lines = [
-        "## PRGuard AI Review",
-        "",
-        f"**Overall confidence:** {report.get('overall_confidence', 0.0):.2f}",
-        "",
-    ]
-
-    issues = report.get("issues", [])
-    if not issues:
-        lines.append("No issues detected by agents.")
-    else:
-        lines.append("### Issues")
-        for issue in issues:
-            lines.append(
-                f"- `{issue.get('severity', '').upper()}` "
-                f"(line {issue.get('line')}): {issue.get('message')}"
-            )
-
-    return "\n".join(lines)
+    logs = fetch_pr_logs(pr_id)
+    if not logs:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No logs found for PR.")
+    return {"pr_id": pr_id, "logs": logs}
 
 
 __all__ = ["app"]

@@ -8,9 +8,9 @@ from schemas.agent_output import AgentOutput, Issue
 
 
 CONFIDENCE_WEIGHTS: Dict[str, float] = {
-    "rule_based": 1.0,  # high weight
-    "llm_reasoning": 0.6,  # medium weight
-    "inferred": 0.3,  # low weight
+    "rule_based": 0.9,
+    "llm_reasoning": 0.6,
+    "inferred": 0.3,
 }
 
 

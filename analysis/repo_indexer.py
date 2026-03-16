@@ -3,83 +3,71 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Tuple
 
 from chromadb import Client
 from chromadb.config import Settings
 
 
-def create_chroma_client(persist_directory: str | None = None) -> Client:
+DEFAULT_COLLECTION = "prguard_repo_index"
+
+
+def _create_chroma_client(persist_directory: str | None = ".chroma") -> Client:
+    return Client(Settings(is_persistent=True, persist_directory=persist_directory))
+
+
+def index_repository(repo_path: str | Path, collection_name: str = DEFAULT_COLLECTION) -> None:
     """
-    Create a ChromaDB client configured for local persistence.
-
-    Args:
-        persist_directory: Optional directory for ChromaDB persistence.
-
-    Returns:
-        Configured ChromaDB client.
+    Scan the repository and index functions/classes into ChromaDB for style retrieval.
     """
-    return Client(Settings(is_persistent=bool(persist_directory), persist_directory=persist_directory))
-
-
-def index_repository_source_files(
-    root: str | Path,
-    collection_name: str,
-    client: Client | None = None,
-) -> None:
-    """
-    Index repository source files into ChromaDB.
-
-    This is a minimal placeholder that stores file-level documents only.
-    """
-    root_path = Path(root)
-    if client is None:
-        client = create_chroma_client()
-
+    root = Path(repo_path)
+    client = _create_chroma_client()
     collection = client.get_or_create_collection(collection_name)
-
-    file_paths: List[Path] = [
-        p for p in root_path.rglob("*.py") if ".venv" not in p.parts and "tests" not in p.parts
-    ]
-
-    if not file_paths:
-        return
 
     documents: List[str] = []
     ids: List[str] = []
     metadatas: List[dict] = []
 
-    for idx, path in enumerate(file_paths):
+    idx = 0
+    for path in root.rglob("*.py"):
+        if ".venv" in path.parts or "tests" in path.parts:
+            continue
         try:
             content = path.read_text(encoding="utf-8")
         except OSError:
             continue
+        rel = str(path.relative_to(root))
         documents.append(content)
-        ids.append(f"{collection_name}:{idx}")
-        metadatas.append({"path": str(path.relative_to(root_path))})
+        ids.append(f"{rel}:{idx}")
+        metadatas.append({"path": rel})
+        idx += 1
 
     if documents:
         collection.add(documents=documents, ids=ids, metadatas=metadatas)
 
 
-def query_similar_files(
-    query_text: str,
-    collection_name: str,
-    client: Client,
+def retrieve_similar_code(
+    snippet: str,
+    collection_name: str = DEFAULT_COLLECTION,
     n_results: int = 5,
-) -> Iterable[dict]:
+) -> Iterable[Tuple[str, str]]:
     """
-    Query ChromaDB for files similar to the given text.
+    Retrieve repository examples similar to the provided code snippet.
 
-    Returns an iterable of metadata dictionaries.
+    Returns an iterable of (path, code_snippet) tuples.
     """
+    client = _create_chroma_client()
     collection = client.get_or_create_collection(collection_name)
-    result = collection.query(query_texts=[query_text], n_results=n_results)
-    metadatas = result.get("metadatas") or []
-    if not metadatas:
-        return []
-    return metadatas[0]
+    result = collection.query(query_texts=[snippet], n_results=n_results)
+
+    docs = result.get("documents") or [[]]
+    metas = result.get("metadatas") or [[]]
+    out: List[Tuple[str, str]] = []
+    for doc, meta in zip(docs[0], metas[0]):
+        path = meta.get("path", "")
+        out.append((path, doc))
+    return out
 
 
-__all__ = ["create_chroma_client", "index_repository_source_files", "query_similar_files"]
+__all__ = ["index_repository", "retrieve_similar_code", "DEFAULT_COLLECTION"]
 
