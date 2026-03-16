@@ -28,6 +28,7 @@ from observability.metrics import (
     AGENT_EXECUTION_TIME,
     REVIEW_CONFIDENCE,
 )
+from observability.tracing import get_tracer
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from fastapi.responses import PlainTextResponse
 from queue.task_queue import (
@@ -39,6 +40,7 @@ from queue.task_queue import (
 from schemas.agent_output import AgentOutput
 
 logger = logging.getLogger(__name__)
+_TRACER = get_tracer("webhook")
 
 app = FastAPI(title="PRGuard AI Webhook Server", version="0.1.0")
 
@@ -113,189 +115,203 @@ async def github_webhook(
     pr_number = payload["number"]
     pr_id = f"{repo}#{pr_number}"
 
-    diff_text = get_pr_diff(repo_full_name=repo, pr_number=pr_number)
+    with _TRACER.start_as_current_span("webhook_received") as span:
+        span.set_attribute("pr.id", pr_id)
+        span.set_attribute("repo.full_name", repo)
+        span.set_attribute("pr.number", int(pr_number))
+        span.set_attribute("pr.action", action or "")
 
-    sandbox_path: str | None = None
-    try:
+        diff_text = get_pr_diff(repo_full_name=repo, pr_number=pr_number)
+
+        sandbox_path: str | None = None
         try:
-            repo_url = payload.get("repository", {}).get("clone_url") or payload.get("repository", {}).get("html_url")
-            sandbox = clone_repository(repo_url=repo_url, pr_number=int(pr_number), repo_full_name=str(repo))
-            sandbox_path = str(sandbox.temp_path)
-
-            # Initialize repository index for style retrieval using sandbox.
-            initialize_repo_index(repo_path=sandbox_path)
-            # Warm dependency graph cache (best-effort).
             try:
-                build_code_graph(sandbox_path)
-            except Exception:
-                logger.warning("Failed to build code graph for repository %s", repo)
-        except RepoSandboxError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+                repo_url = payload.get("repository", {}).get("clone_url") or payload.get("repository", {}).get("html_url")
+                sandbox = clone_repository(repo_url=repo_url, pr_number=int(pr_number), repo_full_name=str(repo))
+                sandbox_path = str(sandbox.temp_path)
+                span.add_event("repo_cloned", {"python_files": sandbox.python_files_indexed, "repo_size_bytes": sandbox.repo_size_bytes})
 
-        repo_metadata: Dict[str, Any] = {
-            "repository": repo,
-            "pr_number": pr_number,
-            "action": action,
-            "pr_id": pr_id,
-        }
+                # Initialize repository index for style retrieval using sandbox.
+                initialize_repo_index(repo_path=sandbox_path)
+                # Warm dependency graph cache (best-effort).
+                try:
+                    build_code_graph(sandbox_path)
+                except Exception:
+                    logger.warning("Failed to build code graph for repository %s", repo)
+            except RepoSandboxError as exc:
+                span.record_exception(exc)
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-        # Enqueue Celery tasks and wait for completion (tasks execute in parallel).
-        await broker.broadcast(
-            pr_id,
-            {"type": "agent_started", "agent": "style", "pr_id": pr_id},
-        )
-        style_started = time.time()
-        style_result = run_style_agent.delay(diff_text, repo_metadata)
-        await broker.broadcast(
-            pr_id,
-            {"type": "agent_started", "agent": "logic", "pr_id": pr_id},
-        )
-        logic_started = time.time()
-        logic_result = run_logic_agent.delay(diff_text, repo_metadata)
-        await broker.broadcast(
-            pr_id,
-            {"type": "agent_started", "agent": "security", "pr_id": pr_id},
-        )
-        security_started = time.time()
-        security_result = run_security_agent.delay(diff_text, repo_metadata)
-
-        style_output_dict = style_result.get(timeout=60)
-        style_finished = time.time()
-        logic_output_dict = logic_result.get(timeout=60)
-        logic_finished = time.time()
-        security_output_dict = security_result.get(timeout=60)
-        security_finished = time.time()
-
-        style_output = AgentOutput(**style_output_dict)
-        logic_output = AgentOutput(**logic_output_dict)
-        security_output = AgentOutput(**security_output_dict)
-
-        # Log agent executions and emit events/metrics.
-        log_agent_execution(
-            pr_id,
-            "style",
-            style_started,
-            style_finished,
-            style_output_dict,
-            execution_duration=style_finished - style_started,
-            agent_order=1,
-        )
-        AGENT_EXECUTION_TIME.labels("style").observe(style_finished - style_started)
-        await broker.broadcast(
-            pr_id,
-            {
-                "type": "agent_finished",
-                "agent": "style",
+            repo_metadata: Dict[str, Any] = {
+                "repository": repo,
+                "pr_number": pr_number,
+                "action": action,
                 "pr_id": pr_id,
-                "confidence": style_output.confidence,
-                "issue_count": len(style_output.issues),
-            },
-        )
-        log_agent_execution(
-            pr_id,
-            "logic",
-            logic_started,
-            logic_finished,
-            logic_output_dict,
-            execution_duration=logic_finished - logic_started,
-            agent_order=2,
-        )
-        AGENT_EXECUTION_TIME.labels("logic").observe(logic_finished - logic_started)
-        await broker.broadcast(
-            pr_id,
-            {
-                "type": "agent_finished",
-                "agent": "logic",
-                "pr_id": pr_id,
-                "confidence": logic_output.confidence,
-                "issue_count": len(logic_output.issues),
-            },
-        )
-        log_agent_execution(
-            pr_id,
-            "security",
-            security_started,
-            security_finished,
-            security_output_dict,
-            execution_duration=security_finished - security_started,
-            agent_order=3,
-        )
-        AGENT_EXECUTION_TIME.labels("security").observe(security_finished - security_started)
-        await broker.broadcast(
-            pr_id,
-            {
-                "type": "agent_finished",
-                "agent": "security",
-                "pr_id": pr_id,
-                "confidence": security_output.confidence,
-                "issue_count": len(security_output.issues),
-            },
-        )
+            }
 
-        # Run arbitrator as a Celery task.
-        arb_started = time.time()
-        arb_result = run_arbitrator.delay(
-            [
+            # Enqueue Celery tasks and wait for completion (tasks execute in parallel).
+            await broker.broadcast(
+                pr_id,
+                {"type": "agent_started", "agent": "style", "pr_id": pr_id},
+            )
+            style_started = time.time()
+            style_result = run_style_agent.delay(diff_text, repo_metadata)
+            await broker.broadcast(
+                pr_id,
+                {"type": "agent_started", "agent": "logic", "pr_id": pr_id},
+            )
+            logic_started = time.time()
+            logic_result = run_logic_agent.delay(diff_text, repo_metadata)
+            await broker.broadcast(
+                pr_id,
+                {"type": "agent_started", "agent": "security", "pr_id": pr_id},
+            )
+            security_started = time.time()
+            security_result = run_security_agent.delay(diff_text, repo_metadata)
+
+            style_output_dict = style_result.get(timeout=60)
+            style_finished = time.time()
+            logic_output_dict = logic_result.get(timeout=60)
+            logic_finished = time.time()
+            security_output_dict = security_result.get(timeout=60)
+            security_finished = time.time()
+
+            style_output = AgentOutput(**style_output_dict)
+            logic_output = AgentOutput(**logic_output_dict)
+            security_output = AgentOutput(**security_output_dict)
+
+            # Log agent executions and emit events/metrics.
+            log_agent_execution(
+                pr_id,
+                "style",
+                style_started,
+                style_finished,
                 style_output_dict,
+                execution_duration=style_finished - style_started,
+                agent_order=1,
+            )
+            AGENT_EXECUTION_TIME.labels("style").observe(style_finished - style_started)
+            await broker.broadcast(
+                pr_id,
+                {
+                    "type": "agent_finished",
+                    "agent": "style",
+                    "pr_id": pr_id,
+                    "confidence": style_output.confidence,
+                    "issue_count": len(style_output.issues),
+                },
+            )
+            span.add_event("agent_finished", {"agent": "style", "confidence": float(style_output.confidence)})
+
+            log_agent_execution(
+                pr_id,
+                "logic",
+                logic_started,
+                logic_finished,
                 logic_output_dict,
+                execution_duration=logic_finished - logic_started,
+                agent_order=2,
+            )
+            AGENT_EXECUTION_TIME.labels("logic").observe(logic_finished - logic_started)
+            await broker.broadcast(
+                pr_id,
+                {
+                    "type": "agent_finished",
+                    "agent": "logic",
+                    "pr_id": pr_id,
+                    "confidence": logic_output.confidence,
+                    "issue_count": len(logic_output.issues),
+                },
+            )
+            span.add_event("agent_finished", {"agent": "logic", "confidence": float(logic_output.confidence)})
+
+            log_agent_execution(
+                pr_id,
+                "security",
+                security_started,
+                security_finished,
                 security_output_dict,
-            ]
-        )
-        arb_output = arb_result.get(timeout=60)
-        arb_finished = time.time()
-        log_agent_execution(
-            pr_id,
-            "arbitrator",
-            arb_started,
-            arb_finished,
-            arb_output,
-            execution_duration=arb_finished - arb_started,
-            agent_order=4,
-        )
-        TOTAL_PRS_PROCESSED.inc()
-        REVIEW_CONFIDENCE.observe(float(arb_output.get("overall_confidence", 0.0)))
-        await broker.broadcast(
-            pr_id,
-            {
-                "type": "confidence_updated",
-                "pr_id": pr_id,
-                "overall_confidence": arb_output.get("overall_confidence", 0.0),
-            },
-        )
-
-        comment_body = format_pr_review(arb_output)
-        post_pr_comment(repo_full_name=repo, pr_number=pr_number, body=comment_body)
-
-        # Post inline comments for medium/high severity issues (up to 10).
-        inline_count = 0
-        for issue in arb_output.get("issues", []):
-            if inline_count >= 10:
-                break
-            severity = str(issue.get("severity", "")).lower()
-            if severity not in {"medium", "high"}:
-                continue
-            file_path = issue.get("file_path")
-            if not file_path:
-                continue
-            line = int(issue.get("line", 1))
-            body = (
-                "⚠ PRGuard AI\n"
-                f"Issue: {issue.get('message')}\n"
-                f"Evidence: {issue.get('evidence')}"
+                execution_duration=security_finished - security_started,
+                agent_order=3,
             )
-            post_inline_comment(
-                repo_full_name=repo,
-                pr_number=pr_number,
-                path=file_path,
-                line=line,
-                body=body,
+            AGENT_EXECUTION_TIME.labels("security").observe(security_finished - security_started)
+            await broker.broadcast(
+                pr_id,
+                {
+                    "type": "agent_finished",
+                    "agent": "security",
+                    "pr_id": pr_id,
+                    "confidence": security_output.confidence,
+                    "issue_count": len(security_output.issues),
+                },
             )
-            inline_count += 1
+            span.add_event("agent_finished", {"agent": "security", "confidence": float(security_output.confidence)})
 
-        return {"status": "ok", "overall_confidence": arb_output.get("overall_confidence", 0.0)}
-    finally:
-        if sandbox_path:
-            cleanup_repository(sandbox_path)
+            # Run arbitrator as a Celery task.
+            arb_started = time.time()
+            arb_result = run_arbitrator.delay(
+                [
+                    style_output_dict,
+                    logic_output_dict,
+                    security_output_dict,
+                ]
+            )
+            arb_output = arb_result.get(timeout=60)
+            arb_finished = time.time()
+            log_agent_execution(
+                pr_id,
+                "arbitrator",
+                arb_started,
+                arb_finished,
+                arb_output,
+                execution_duration=arb_finished - arb_started,
+                agent_order=4,
+            )
+            TOTAL_PRS_PROCESSED.inc()
+            REVIEW_CONFIDENCE.observe(float(arb_output.get("overall_confidence", 0.0)))
+            await broker.broadcast(
+                pr_id,
+                {
+                    "type": "confidence_updated",
+                    "pr_id": pr_id,
+                    "overall_confidence": arb_output.get("overall_confidence", 0.0),
+                },
+            )
+            span.add_event("arbitrator_complete", {"overall_confidence": float(arb_output.get("overall_confidence", 0.0))})
+
+            comment_body = format_pr_review(arb_output)
+            post_pr_comment(repo_full_name=repo, pr_number=pr_number, body=comment_body)
+
+            # Post inline comments for medium/high severity issues (up to 10).
+            inline_count = 0
+            for issue in arb_output.get("issues", []):
+                if inline_count >= 10:
+                    break
+                severity = str(issue.get("severity", "")).lower()
+                if severity not in {"medium", "high"}:
+                    continue
+                file_path = issue.get("file_path")
+                if not file_path:
+                    continue
+                line = int(issue.get("line", 1))
+                body = (
+                    "⚠ PRGuard AI\n"
+                    f"Issue: {issue.get('message')}\n"
+                    f"Evidence: {issue.get('evidence')}"
+                )
+                post_inline_comment(
+                    repo_full_name=repo,
+                    pr_number=pr_number,
+                    path=file_path,
+                    line=line,
+                    body=body,
+                )
+                inline_count += 1
+
+            return {"status": "ok", "overall_confidence": arb_output.get("overall_confidence", 0.0)}
+        finally:
+            if sandbox_path:
+                cleanup_repository(sandbox_path)
 
 
 @app.get("/review/{pr_id}")

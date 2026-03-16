@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 import sys
 
-import redis
 import uvicorn
 
 from config.settings import settings
 from github.webhook_server import app as webhook_app
 from observability.logging import _get_conn as _init_db  # type: ignore
+from observability.tracing import configure_tracing
 
 
 app = webhook_app
@@ -30,18 +30,10 @@ def _configure_logging() -> None:
     root.addHandler(handler)
 
 
-def _verify_redis() -> None:
-    client = redis.Redis.from_url(settings.redis_url)
-    try:
-        client.ping()
-    except Exception as exc:  # pragma: no cover
-        raise RuntimeError(f"Failed to connect to Redis at {settings.redis_url}") from exc
-
-
 def startup() -> None:
     _configure_logging()
+    configure_tracing(service_name="prguard-api")
     _init_db()
-    _verify_redis()
 
 
 def run() -> None:

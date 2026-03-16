@@ -12,6 +12,7 @@ import openai
 from config.settings import settings
 from observability.logging import log_llm_usage
 from observability.metrics import LLM_TOKENS_USED
+from observability.tracing import get_tracer
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ MAX_TOKENS_PER_PR = 8000
 
 _PR_TOKEN_USAGE: Dict[str, int] = {}
 _LOCK = threading.Lock()
+_TRACER = get_tracer("llm")
 
 
 def calculate_openai_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -105,56 +107,68 @@ def generate_analysis(
     _check_and_update_budget(pr_id, requested)
 
     last_error: Exception | None = None
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            response = openai.ChatCompletion.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=requested,
-                temperature=temperature,
-            )
-            message = response["choices"][0]["message"]["content"]
-
-            usage = response.get("usage", {}) or {}
-            meta = {
-                "model": model,
-                "prompt_tokens": usage.get("prompt_tokens", 0),
-                "completion_tokens": usage.get("completion_tokens", 0),
-                "total_tokens": usage.get("total_tokens", 0),
-                "pr_id": pr_id,
-            }
-
-            # Metrics and cost tracking.
-            total_tokens = int(meta["total_tokens"])
-            prompt_tokens = int(meta["prompt_tokens"])
-            completion_tokens = int(meta["completion_tokens"])
-            if pr_id:
-                log_llm_usage(
-                    pr_id=pr_id,
-                    agent="unknown",
+    with _TRACER.start_as_current_span("llm_call") as span:
+        span.set_attribute("llm.model", model)
+        if pr_id:
+            span.set_attribute("pr.id", pr_id)
+        for attempt in range(1, MAX_RETRIES + 1):
+            span.set_attribute("llm.attempt", attempt)
+            try:
+                response = openai.ChatCompletion.create(
                     model=model,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    estimated_cost_usd=calculate_openai_cost(model, prompt_tokens, completion_tokens),
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=requested,
+                    temperature=temperature,
                 )
-            LLM_TOKENS_USED.labels(agent="unknown", model=model).inc(total_tokens)
-            return message, meta
-        except openai.error.RateLimitError as exc:  # type: ignore[attr-defined]
-            last_error = exc
-            logger.warning("OpenAI rate limit hit (attempt %s/%s). Backing off.", attempt, MAX_RETRIES)
-            time.sleep(RETRY_BACKOFF_SECONDS * attempt)
-        except openai.error.OpenAIError as exc:  # type: ignore[attr-defined]
-            last_error = exc
-            logger.error("OpenAI API error: %s", exc)
-            if attempt == MAX_RETRIES:
-                raise
-            time.sleep(RETRY_BACKOFF_SECONDS * attempt)
-        except Exception as exc:  # pragma: no cover
-            last_error = exc
-            logger.exception("Unexpected error calling OpenAI.")
-            if attempt == MAX_RETRIES:
-                raise
-            time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+                message = response["choices"][0]["message"]["content"]
+
+                usage = response.get("usage", {}) or {}
+                meta = {
+                    "model": model,
+                    "prompt_tokens": usage.get("prompt_tokens", 0),
+                    "completion_tokens": usage.get("completion_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                    "pr_id": pr_id,
+                }
+
+                # Metrics and cost tracking.
+                total_tokens = int(meta["total_tokens"])
+                prompt_tokens = int(meta["prompt_tokens"])
+                completion_tokens = int(meta["completion_tokens"])
+                span.set_attribute("llm.prompt_tokens", prompt_tokens)
+                span.set_attribute("llm.completion_tokens", completion_tokens)
+                span.set_attribute("llm.total_tokens", total_tokens)
+
+                if pr_id:
+                    log_llm_usage(
+                        pr_id=pr_id,
+                        agent="unknown",
+                        model=model,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                        estimated_cost_usd=calculate_openai_cost(model, prompt_tokens, completion_tokens),
+                    )
+                LLM_TOKENS_USED.labels(agent="unknown", model=model).inc(total_tokens)
+                return message, meta
+            except openai.error.RateLimitError as exc:  # type: ignore[attr-defined]
+                last_error = exc
+                span.record_exception(exc)
+                logger.warning("OpenAI rate limit hit (attempt %s/%s). Backing off.", attempt, MAX_RETRIES)
+                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+            except openai.error.OpenAIError as exc:  # type: ignore[attr-defined]
+                last_error = exc
+                span.record_exception(exc)
+                logger.error("OpenAI API error: %s", exc)
+                if attempt == MAX_RETRIES:
+                    raise
+                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+            except Exception as exc:  # pragma: no cover
+                last_error = exc
+                span.record_exception(exc)
+                logger.exception("Unexpected error calling OpenAI.")
+                if attempt == MAX_RETRIES:
+                    raise
+                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
 
     assert last_error is not None
     raise last_error
