@@ -64,6 +64,7 @@ def analyze_style(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -
     Analyze style issues in the diff using both simple rules and LLM guidance.
     """
     repo_metadata = repo_metadata or {}
+    pr_id = repo_metadata.get("pr_id")
 
     parsed = parse_diff(diff_text)
     changed_files = extract_changed_files(parsed)[:MAX_FILES_PER_PR]
@@ -108,7 +109,7 @@ def analyze_style(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -
     llm_issues: List[Issue] = []
     if diff_text:
         prompt = _build_llm_input(diff_text, repo_examples)
-        text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT)
+        text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
         llm_issues = _parse_llm_issues(text)
 
     all_issues = issues + llm_issues

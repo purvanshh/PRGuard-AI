@@ -9,4 +9,4 @@ chromadb
 openai
 pytest
 python-dotenv
-
+requests

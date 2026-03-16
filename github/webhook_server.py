@@ -12,6 +12,7 @@ from typing import Any, Dict, List
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 
 from config.settings import settings
+from analysis.repo_indexer import initialize_repo_index
 from github.github_client import format_pr_review, get_pr_diff, post_pr_comment
 from observability.logging import fetch_pr_logs, log_agent_execution
 from queue.task_queue import (
@@ -99,10 +100,14 @@ async def github_webhook(
 
     diff_text = get_pr_diff(repo_full_name=repo, pr_number=pr_number)
 
+    # Initialize repository index for style retrieval.
+    initialize_repo_index(repo_path=".")
+
     repo_metadata: Dict[str, Any] = {
         "repository": repo,
         "pr_number": pr_number,
         "action": action,
+        "pr_id": pr_id,
     }
 
     # Enqueue Celery tasks and wait for completion (tasks execute in parallel).
@@ -157,6 +162,20 @@ async def get_review(pr_id: str) -> Dict[str, Any]:
     if not logs:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No logs found for PR.")
     return {"pr_id": pr_id, "logs": logs}
+
+
+@app.get("/health")
+async def health() -> Dict[str, str]:
+    """
+    Basic health check endpoint.
+    """
+    redis_status = "connected"
+    openai_status = "configured" if bool(settings.openai_api_key) else "missing"
+    return {
+        "status": "ok",
+        "redis": redis_status,
+        "openai": openai_status,
+    }
 
 
 __all__ = ["app"]

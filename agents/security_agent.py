@@ -73,6 +73,7 @@ def analyze_security(diff_text: str, repo_metadata: Dict[str, Any] | None = None
     Detect security vulnerabilities using both rule-based checks and LLM reasoning.
     """
     repo_metadata = repo_metadata or {}
+    pr_id = repo_metadata.get("pr_id")
     parsed = parse_diff(diff_text)
 
     files = list(parsed.keys())[:MAX_FILES_PER_PR]
@@ -122,7 +123,7 @@ def analyze_security(diff_text: str, repo_metadata: Dict[str, Any] | None = None
     llm_issues: List[Issue] = []
     if diff_text:
         prompt = _load_prompt() + "\n\n--- Diff ---\n" + diff_text
-        text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT)
+        text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
         llm_issues = _parse_llm_issues(text)
 
     all_issues = issues + llm_issues

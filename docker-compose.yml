@@ -9,6 +9,7 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
       - REDIS_URL=redis://redis:6379/0
+      - CHROMA_PERSIST_DIR=/app/.chroma
     ports:
       - "8000:8000"
     depends_on:
@@ -23,6 +24,7 @@ services:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
       - REDIS_URL=redis://redis:6379/0
+      - CHROMA_PERSIST_DIR=/app/.chroma
     depends_on:
       - redis
 
