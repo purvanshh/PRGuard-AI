@@ -11,7 +11,7 @@ from prguard_ai.agents.arbitrator_agent import arbitrate_confidence
 from prguard_ai.agents.logic_agent import analyze_logic
 from prguard_ai.agents.security_agent import analyze_security
 from prguard_ai.agents.style_agent import analyze_style
-from llm import client as llm_client
+from prguard_ai.llm import client as llm_client
 from prguard_ai.schemas.agent_output import AgentOutput
 from prguard_ai.schemas.pr_report import PullRequestReport
 
