@@ -1,4 +1,4 @@
-<![CDATA[<div align="center">
+<div align="center">
 
 # 🛡️ PRGuard AI
 
@@ -21,73 +21,55 @@ PRGuard AI hooks into GitHub via webhooks and runs three independent analysis ag
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                            GitHub (PR opened/updated)                       │
-└─────────────────────┬───────────────────────────────────────────────────────┘
-                      │ webhook (POST /webhook)
-                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  FastAPI Server                                                             │
-│  ┌───────────────┐  ┌──────────────┐  ┌─────────────┐  ┌────────────────┐  │
-│  │ HMAC Sig      │→ │ Replay       │→ │ Timestamp   │→ │ Rate Limiter   │  │
-│  │ Verification  │  │ Protection   │  │ Validation  │  │ (repo + inst.) │  │
-│  └───────────────┘  └──────────────┘  └─────────────┘  └────────────────┘  │
-│                                                                             │
-│  ┌───────────────┐  ┌──────────────┐                                        │
-│  │ Repo Clone &  │→ │ ChromaDB     │  (index repo style patterns)           │
-│  │ Sandbox       │  │ Indexing     │                                        │
-│  └───────────────┘  └──────────────┘                                        │
-└─────────────────────┬───────────────────────────────────────────────────────┘
-                      │ enqueue Celery tasks
-                      ▼
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  Celery + Redis Task Queue                                                  │
-│                                                                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                      │
-│  │ Style Agent  │  │ Logic Agent  │  │ Security     │   (parallel, each    │
-│  │              │  │              │  │ Agent        │    on dedicated queue)│
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘                      │
-│         └──────────────────┼──────────────────┘                             │
-│                            ▼                                                │
-│              ┌──────────────────────┐                                       │
-│              │ Confidence           │                                       │
-│              │ Arbitrator           │                                       │
-│              └──────────┬───────────┘                                       │
-└─────────────────────────┼───────────────────────────────────────────────────┘
-                          │
-           ┌──────────────┼──────────────┐
-           ▼              ▼              ▼
-     ┌──────────┐  ┌──────────────┐  ┌──────────────┐
-     │ PR       │  │ Inline       │  │ Audit Log    │
-     │ Comment  │  │ Comments     │  │ (SQLite)     │
-     └──────────┘  └──────────────┘  └──────────────┘
+```mermaid
+flowchart TD
+    GH["GitHub (PR opened / updated)"]
+    GH -->|"POST /webhook"| FW
+
+    subgraph FW["FastAPI Server"]
+        direction LR
+        HMAC["HMAC Sig\nVerification"] --> REPLAY["Replay\nProtection"]
+        REPLAY --> TS["Timestamp\nValidation"]
+        TS --> RL["Rate Limiter\n(repo + inst.)"]
+        RL --> CLONE["Repo Clone\n& Sandbox"]
+        CLONE --> IDX["ChromaDB\nIndexing"]
+    end
+
+    FW -->|"enqueue Celery tasks"| CQ
+
+    subgraph CQ["Celery + Redis Task Queue"]
+        direction TB
+        SA["Style Agent"] & LA["Logic Agent"] & SEC["Security Agent"]
+        SA & LA & SEC --> ARB["Confidence\nArbitrator"]
+    end
+
+    ARB --> C1["PR Comment"]
+    ARB --> C2["Inline Comments"]
+    ARB --> C3["Audit Log (SQLite)"]
 ```
 
 ## Example PR Comment
 
 When PRGuard AI finishes analyzing a pull request, it posts a comment like this:
 
-```markdown
-## PRGuard AI Review
-
-**Confidence Score:** 0.74
-
-### Style
-- `MEDIUM` (line 15): Tab character used for indentation instead of spaces.
-- `LOW` (line 88): Line exceeds 120 characters.
-
-### Logic
-- `MEDIUM` (line 42): Bare except detected; this can hide runtime errors.
-- `LOW` (line 67): TODO present in newly added code.
-
-### Security
-- `HIGH` (line 23): Potential SQL injection pattern (string-concatenated query).
-- `HIGH` (line 91): Possible hardcoded secret or API key.
-
-### Disagreement Summary
-- security reports high-severity issues while style does not.
-```
+> ## PRGuard AI Review
+>
+> **Confidence Score:** 0.74
+>
+> ### Style
+> - `MEDIUM` (line 15): Tab character used for indentation instead of spaces.
+> - `LOW` (line 88): Line exceeds 120 characters.
+>
+> ### Logic
+> - `MEDIUM` (line 42): Bare except detected; this can hide runtime errors.
+> - `LOW` (line 67): TODO present in newly added code.
+>
+> ### Security
+> - `HIGH` (line 23): Potential SQL injection pattern (string-concatenated query).
+> - `HIGH` (line 91): Possible hardcoded secret or API key.
+>
+> ### Disagreement Summary
+> - security reports high-severity issues while style does not.
 
 Medium and high-severity issues also get posted as **inline comments** on the specific lines in the PR diff (up to 10 per review).
 
@@ -113,7 +95,7 @@ Detects logical defects using AST analysis and contextual reasoning:
 | Pass | Method | What It Catches |
 |------|--------|-----------------|
 | **Rule-based** | Pattern matching on added lines | Bare `except:`, unresolved `TODO`s |
-| **AST-informed** | `tree-sitter` parse → function/variable/control-flow summary | Function structure, variable usage, control flow patterns |
+| **AST-informed** | `tree-sitter` parse &rarr; function/variable/control-flow summary | Function structure, variable usage, control flow patterns |
 | **LLM-guided** | Prompt + AST summary + surrounding context | Off-by-one errors, null handling, boundary conditions, unhandled exceptions |
 
 The logic agent builds an AST summary (`analysis/ast_parser.py`) of changed code and feeds it alongside surrounding context lines to the LLM for deeper reasoning.
@@ -211,7 +193,7 @@ Tests cover diff parsing, agent outputs, scoring engine calculations, and the fu
 
 ## GitHub Webhook Configuration
 
-1. Go to your repository → **Settings** → **Webhooks** → **Add webhook**
+1. Go to your repository &rarr; **Settings** &rarr; **Webhooks** &rarr; **Add webhook**
 
 2. Configure the webhook:
    | Field | Value |
@@ -309,7 +291,7 @@ prguard-ai/
 PRGuard AI includes an evaluation framework (`evaluation/evaluator.py`) that benchmarks agent accuracy against labeled datasets:
 
 1. **Dataset**: Hand-annotated PR diffs in `evaluation/dataset/` with expected issues (line number + message pairs)
-2. **Pipeline**: Each diff is run through all three agents → arbitrator → produces detected issue set
+2. **Pipeline**: Each diff is run through all three agents &rarr; arbitrator &rarr; produces detected issue set
 3. **Metrics**: Standard information-retrieval metrics computed against the expected set:
    - **True Positives** — correctly detected issues
    - **False Positives** — spurious findings
@@ -361,4 +343,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 Built by [Purvansh Sahu](https://github.com/purvanshh) · 3rd Year CS @ Scaler School of Technology + BITS Pilani · ML Research Intern @ IIT Madras
 
 </div>
-]]>
