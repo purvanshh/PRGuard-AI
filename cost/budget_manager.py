@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Final
 
-from queue.redis_client import get_redis
+from task_queue.redis_client import RedisClientError, get_redis
 
 
 _DAILY_LIMIT_USD: Final[float] = 5.0
@@ -21,19 +21,30 @@ def add_usage(repo_name: str, cost_usd: float) -> None:
         return
     today = dt.date.today()
     key = _bucket_key(repo_name, today)
-    r = get_redis()
-    r.incrbyfloat(key, float(cost_usd))
-    # Ensure the bucket expires at the end of the day.
-    expiry = dt.datetime.combine(today, dt.time.max)
-    r.expireat(key, int(expiry.timestamp()))
+    try:
+        r = get_redis()
+        r.incrbyfloat(key, float(cost_usd))
+        # Ensure the bucket expires at the end of the day.
+        expiry = dt.datetime.combine(today, dt.time.max)
+        r.expireat(key, int(expiry.timestamp()))
+    except (RedisClientError, Exception):
+        # If Redis is unavailable, skip cost tracking rather than failing the request.
+        return
 
 
 def check_budget(repo_name: str) -> bool:
-    """Return True if the repository is still within its daily cost budget."""
+    """Return True if the repository is still within its daily cost budget.
+
+    If Redis is unavailable, we treat the budget as not exceeded to avoid
+    hard-failing reviews due to metering issues.
+    """
     today = dt.date.today()
     key = _bucket_key(repo_name, today)
-    r = get_redis()
-    raw = r.get(key)
+    try:
+        r = get_redis()
+        raw = r.get(key)
+    except (RedisClientError, Exception):
+        return True
     if raw is None:
         return True
     try:

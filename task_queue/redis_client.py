@@ -1,7 +1,9 @@
 """Centralized Redis client for PRGuard AI.
 
 Supports single-node and Sentinel deployments, with basic connection retries
-and sane network timeouts. Prefer importing via `task_queue.redis_client`.
+and sane network timeouts. All code should import Redis via:
+
+    from task_queue.redis_client import get_redis
 """
 
 from __future__ import annotations

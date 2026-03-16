@@ -31,13 +31,13 @@ from observability.metrics import (
 from observability.tracing import get_tracer
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from fastapi.responses import PlainTextResponse
-from queue.task_queue import (
+from task_queue.celery_app import (
     run_arbitrator,
     run_logic_agent,
     run_security_agent,
     run_style_agent,
 )
-from queue.task_registry import (
+from task_queue.task_registry import (
     acquire_global_slot,
     complete_pr_processing,
     is_pr_processing,
@@ -45,7 +45,7 @@ from queue.task_registry import (
     release_global_slot,
 )
 from security.rate_limiter import check_installation_limit, check_repo_limit
-from queue.redis_client import get_redis
+from task_queue.redis_client import get_redis
 from schemas.agent_output import AgentOutput
 
 logger = logging.getLogger(__name__)

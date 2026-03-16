@@ -5,14 +5,14 @@ from __future__ import annotations
 import os
 
 from opentelemetry import trace
-from opentelemetry.exporter.jaeger.thrift import JaegerExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 
 def configure_tracing(service_name: str) -> None:
-    """Configure global tracer provider and Jaeger exporter."""
+    """Configure global tracer provider and OTLP exporter."""
     if isinstance(trace.get_tracer_provider(), TracerProvider):
         # Already configured.
         return
@@ -21,10 +21,10 @@ def configure_tracing(service_name: str) -> None:
     provider = TracerProvider(resource=resource)
     trace.set_tracer_provider(provider)
 
-    jaeger_host = os.getenv("JAEGER_AGENT_HOST", "jaeger")
-    jaeger_port = int(os.getenv("JAEGER_AGENT_PORT", "6831"))
+    # Default OTLP endpoint (can be overridden via OTEL_EXPORTER_OTLP_ENDPOINT).
+    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
 
-    exporter = JaegerExporter(agent_host_name=jaeger_host, agent_port=jaeger_port)
+    exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
     provider.add_span_processor(BatchSpanProcessor(exporter))
 
 

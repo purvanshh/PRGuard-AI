@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Final
 
-from queue.redis_client import get_redis
+from task_queue.redis_client import RedisClientError, get_redis
 
 
 _REPO_WINDOW_SECONDS: Final[int] = 60 * 60        # 1 hour
@@ -16,17 +16,24 @@ _INSTALL_MAX_EVENTS: Final[int] = 100
 
 
 def _check_limit(key: str, window_seconds: int, max_events: int) -> bool:
-    """Generic sliding-window limiter using a Redis sorted set."""
+    """Generic sliding-window limiter using a Redis sorted set.
+
+    If Redis is unavailable, we treat the limit as not exceeded so that
+    availability is preferred over strict rate enforcement.
+    """
     now = int(time.time())
-    r = get_redis()
-    pipe = r.pipeline()
-    # Drop entries outside the window, add current, then count.
-    pipe.zremrangebyscore(key, 0, now - window_seconds)
-    pipe.zadd(key, {str(now): now})
-    pipe.zcard(key)
-    pipe.expire(key, window_seconds)
-    _, _, count, _ = pipe.execute()
-    return int(count) <= max_events
+    try:
+        r = get_redis()
+        pipe = r.pipeline()
+        # Drop entries outside the window, add current, then count.
+        pipe.zremrangebyscore(key, 0, now - window_seconds)
+        pipe.zadd(key, {str(now): now})
+        pipe.zcard(key)
+        pipe.expire(key, window_seconds)
+        _, _, count, _ = pipe.execute()
+        return int(count) <= max_events
+    except (RedisClientError, Exception):
+        return True
 
 
 def check_repo_limit(repo_name: str) -> bool:

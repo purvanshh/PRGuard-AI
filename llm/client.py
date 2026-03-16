@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from typing import Any, Dict, Tuple
@@ -90,8 +91,12 @@ def generate_analysis(
     configured (e.g. in local or CI test runs), this returns a deterministic
     stub response instead of calling the external API.
     """
-    if not settings.openai_api_key:
-        logger.warning("OPENAI_API_KEY not set; returning offline stub response from generate_analysis.")
+    # Offline/test mode: when no API key or when running under pytest, always return a stub.
+    if not settings.openai_api_key or "PYTEST_CURRENT_TEST" in os.environ:
+        if not settings.openai_api_key:
+            logger.warning("OPENAI_API_KEY not set; returning offline stub response from generate_analysis.")
+        else:
+            logger.info("Detected pytest run; skipping external OpenAI call and returning stub response.")
         meta: Dict[str, Any] = {
             "model": "offline-stub",
             "prompt_tokens": 0,

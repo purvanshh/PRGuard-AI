@@ -18,7 +18,7 @@ services:
   worker:
     build: .
     container_name: prguard-worker
-    command: celery -A queue.task_queue.celery_app worker --loglevel=INFO --concurrency=1
+    command: celery -A task_queue.celery_app.celery_app worker --loglevel=INFO --concurrency=1
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
