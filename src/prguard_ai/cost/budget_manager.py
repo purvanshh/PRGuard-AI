@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Final
 
-from task_queue.redis_client import RedisClientError, get_redis
+from prguard_ai.task_queue.redis_client import RedisClientError, get_redis
 
 
 _DAILY_LIMIT_USD: Final[float] = 5.0

@@ -1,6 +1,6 @@
 """Tests for the diff parser utilities."""
 
-from analysis.diff_parser import (
+from prguard_ai.analysis.diff_parser import (
     DiffHunk,
     DiffLine,
     extract_changed_files,

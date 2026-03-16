@@ -1,7 +1,7 @@
 """Tests for the confidence scoring engine."""
 
-from confidence.scoring_engine import calculate_agent_confidence, aggregate_confidence
-from schemas.agent_output import AgentOutput, Issue
+from prguard_ai.confidence.scoring_engine import calculate_agent_confidence, aggregate_confidence
+from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
 
 def make_issue(severity: str, source: str) -> Issue:

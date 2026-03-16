@@ -7,13 +7,13 @@ from typing import Any, Tuple
 
 import pytest
 
-from agents.arbitrator_agent import arbitrate_confidence
-from agents.logic_agent import analyze_logic
-from agents.security_agent import analyze_security
-from agents.style_agent import analyze_style
+from prguard_ai.agents.arbitrator_agent import arbitrate_confidence
+from prguard_ai.agents.logic_agent import analyze_logic
+from prguard_ai.agents.security_agent import analyze_security
+from prguard_ai.agents.style_agent import analyze_style
 from llm import client as llm_client
-from schemas.agent_output import AgentOutput
-from schemas.pr_report import PullRequestReport
+from prguard_ai.schemas.agent_output import AgentOutput
+from prguard_ai.schemas.pr_report import PullRequestReport
 
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"

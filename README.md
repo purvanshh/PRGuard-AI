@@ -318,7 +318,7 @@ PRGuard AI includes an evaluation framework (`evaluation/evaluator.py`) that ben
 
 Run evaluation:
 ```bash
-python -c "from evaluation.evaluator import evaluate_pr; print(evaluate_pr(open('evaluation/dataset/example_1.json').read()))"
+python -c "from prguard_ai.evaluation.evaluator import evaluate_pr; print(evaluate_pr(open('evaluation/dataset/example_1.json').read()))"
 ```
 
 ## Security Measures

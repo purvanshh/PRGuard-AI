@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from typing import Final
 
-from task_queue.redis_client import RedisClientError, get_redis
+from prguard_ai.task_queue.redis_client import RedisClientError, get_redis
 
 
 _REPO_WINDOW_SECONDS: Final[int] = 60 * 60        # 1 hour

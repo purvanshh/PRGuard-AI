@@ -1,8 +1,8 @@
 """Smoke tests for analysis agents."""
 
-from agents.logic_agent import analyze_logic
-from agents.security_agent import analyze_security
-from agents.style_agent import analyze_style
+from prguard_ai.agents.logic_agent import analyze_logic
+from prguard_ai.agents.security_agent import analyze_security
+from prguard_ai.agents.style_agent import analyze_style
 
 
 DIFF = """diff --git a/foo.py b/foo.py

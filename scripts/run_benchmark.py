@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List
 
-from evaluation.evaluator import evaluate_pr
+from prguard_ai.evaluation.evaluator import evaluate_pr
 
 
 DATASET_DIR = Path("evaluation/dataset")
