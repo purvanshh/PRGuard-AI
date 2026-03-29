@@ -8,9 +8,6 @@ from typing import Iterable, List, Tuple
 
 DEFAULT_COLLECTION = "prguard_repo_index"
 
-_INDEX_INITIALIZED: bool = False
-
-
 def _create_chroma_client(*args, **kwargs):
     """
     Placeholder factory used when ChromaDB is not available.
@@ -33,12 +30,8 @@ def initialize_repo_index(repo_path: str | Path, collection_name: str = DEFAULT_
     """
     Ensure that a Chroma index for the repository exists and is populated.
     """
-    global _INDEX_INITIALIZED
-    if _INDEX_INITIALIZED:
-        return
-
     # No-op when ChromaDB is disabled.
-    _INDEX_INITIALIZED = True
+    return None
 
 
 def retrieve_similar_code(
@@ -57,4 +50,3 @@ def retrieve_similar_code(
 
 
 __all__ = ["index_repository", "initialize_repo_index", "retrieve_similar_code", "DEFAULT_COLLECTION"]
-

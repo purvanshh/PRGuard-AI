@@ -6,6 +6,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 import time
 from typing import Any, Dict, List
 
@@ -52,6 +53,54 @@ logger = logging.getLogger(__name__)
 _TRACER = get_tracer("webhook")
 
 app = FastAPI(title="PRGuard AI Webhook Server", version="0.1.0")
+
+
+_REPO_FULL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+_DELIVERY_ID_PATTERN = re.compile(r"^[A-Fa-f0-9-]{8,128}$")
+
+
+def _validate_repo_full_name(raw: object) -> str:
+    if not isinstance(raw, str) or not _REPO_FULL_NAME_PATTERN.fullmatch(raw):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "invalid_repository", "reason": "Repository full name is malformed."},
+        )
+    return raw
+
+
+def _validate_pr_number(raw: object) -> int:
+    try:
+        pr_number = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "invalid_pr_number", "reason": "Pull request number must be an integer."},
+        ) from exc
+    if pr_number <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "invalid_pr_number", "reason": "Pull request number must be positive."},
+        )
+    return pr_number
+
+
+def _validate_repo_url_from_payload(payload: dict) -> str:
+    repo_url = payload.get("repository", {}).get("clone_url") or payload.get("repository", {}).get("html_url")
+    if not repo_url or not isinstance(repo_url, str):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "missing_repo_url", "reason": "Clone URL missing from webhook payload."},
+        )
+    return repo_url
+
+
+def _validate_delivery_id(raw: object) -> str:
+    if not isinstance(raw, str) or not _DELIVERY_ID_PATTERN.fullmatch(raw):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "invalid_delivery_id", "reason": "X-GitHub-Delivery must be a UUID-like token."},
+        )
+    return raw
 
 
 def verify_github_signature(
@@ -157,8 +206,9 @@ async def github_webhook(
         )
 
     # 2. Replay protection using X-GitHub-Delivery as a unique ID.
+    delivery_id = _validate_delivery_id(x_github_delivery)
     r = get_redis()
-    delivery_key = f"prguard:webhook:delivery:{x_github_delivery}"
+    delivery_key = f"prguard:webhook:delivery:{delivery_id}"
     if not r.setnx(delivery_key, "1"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -202,10 +252,13 @@ async def github_webhook(
     if action not in {"opened", "synchronize", "ready_for_review"}:
         return {"status": "ignored", "reason": f"action {action} not supported"}
 
-    repo = payload["repository"]["full_name"]
-    pr_number = payload["number"]
+    repo = _validate_repo_full_name(payload["repository"]["full_name"])
+    pr_number = _validate_pr_number(payload["number"])
     pr_id = f"{repo}#{pr_number}"
-    installation_id = int(payload.get("installation", {}).get("id", 0))
+    try:
+        installation_id = int(payload.get("installation", {}).get("id", 0))
+    except (TypeError, ValueError):
+        installation_id = 0
 
     # Rate limiting per repo and installation.
     if not check_repo_limit(repo):
@@ -247,8 +300,8 @@ async def github_webhook(
             if not registered:
                 return {"status": "ignored", "reason": "already_processing"}
             try:
-                repo_url = payload.get("repository", {}).get("clone_url") or payload.get("repository", {}).get("html_url")
-                sandbox = clone_repository(repo_url=repo_url, pr_number=int(pr_number), repo_full_name=str(repo))
+                repo_url = _validate_repo_url_from_payload(payload)
+                sandbox = clone_repository(repo_url=repo_url, pr_number=pr_number, repo_full_name=str(repo))
                 sandbox_path = str(sandbox.temp_path)
                 span.add_event("repo_cloned", {"python_files": sandbox.python_files_indexed, "repo_size_bytes": sandbox.repo_size_bytes})
 
@@ -496,4 +549,3 @@ async def metrics() -> PlainTextResponse:
 
 
 __all__ = ["app"]
-

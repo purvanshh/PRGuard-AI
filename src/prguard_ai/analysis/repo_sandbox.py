@@ -9,12 +9,15 @@ It does not implement any agent logic.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import shutil
 import subprocess
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Tuple
+from urllib.parse import urlparse
 
 
 SANDBOX_ROOT = Path("/tmp/prguard")
@@ -43,6 +46,27 @@ def _safe_pr_id(repo_full_name: str, pr_number: int) -> str:
     # Prevent path traversal and keep filesystem-friendly.
     safe_repo = repo_full_name.replace("/", "__").replace("..", "_")
     return f"{safe_repo}#{int(pr_number)}"
+
+
+def _validate_repo_url(repo_url: str) -> str:
+    parsed = urlparse(repo_url)
+    if parsed.scheme.lower() != "https":
+        raise RepoSandboxError("Only https clone URLs are permitted.")
+    if not parsed.netloc:
+        raise RepoSandboxError("Invalid repository URL: missing host.")
+
+    host = parsed.hostname or ""
+    try:
+        ip = ipaddress.ip_address(host)
+        if ip.is_private or ip.is_loopback or ip.is_reserved or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
+            raise RepoSandboxError("Repository host is not allowed (private/loopback IP).")
+    except ValueError:
+        # Hostname, not an IP. Block obvious localhost-style names.
+        lowered = host.lower()
+        if lowered in {"localhost", "127.0.0.1"}:
+            raise RepoSandboxError("Repository host localhost is not allowed.")
+
+    return repo_url
 
 
 def _iter_files(root: Path) -> Iterable[Path]:
@@ -90,16 +114,19 @@ def clone_repository(repo_url: str, pr_number: int, repo_full_name: str | None =
     repo_full_name = repo_full_name or "repo"
     pr_id = _safe_pr_id(repo_full_name, pr_number)
 
-    temp_path = SANDBOX_ROOT / pr_id
+    temp_root = SANDBOX_ROOT / pr_id
+    temp_path = temp_root / uuid.uuid4().hex
     temp_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Ensure clean workspace for idempotency.
+    # Ensure clean workspace for this request only.
     if temp_path.exists():
         shutil.rmtree(temp_path, ignore_errors=True)
 
     if offline_mode:
         temp_path.mkdir(parents=True, exist_ok=True)
         return RepoSandboxResult(temp_path=temp_path, python_files_indexed=0, repo_size_bytes=0)
+
+    _validate_repo_url(repo_url)
 
     env = os.environ.copy()
     env.setdefault("GIT_TERMINAL_PROMPT", "0")
