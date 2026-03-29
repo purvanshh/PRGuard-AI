@@ -3,16 +3,22 @@
 Supports single-node and Sentinel deployments, with basic connection retries
 and sane network timeouts. All code should import Redis via:
 
-    from task_queue.redis_client import get_redis
+    from prguard_ai.task_queue.redis_client import get_redis
 """
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Optional
 
 import redis
 from redis.sentinel import Sentinel
+
+try:  # Optional, used for memory fallback.
+    import fakeredis
+except Exception:  # pragma: no cover - optional dependency
+    fakeredis = None
 
 
 class RedisClientError(RuntimeError):
@@ -21,6 +27,12 @@ class RedisClientError(RuntimeError):
 
 _DEFAULT_TIMEOUT = float(os.getenv("REDIS_SOCKET_TIMEOUT", "2.0"))
 _DEFAULT_RETRIES = int(os.getenv("REDIS_CONNECT_RETRIES", "3"))
+
+_LOGGER = logging.getLogger(__name__)
+
+
+def _is_truthy(value: str | None) -> bool:
+    return str(value).lower() in {"1", "true", "yes", "on"}
 
 
 def _make_singleton_client() -> redis.Redis:
@@ -31,6 +43,12 @@ def _make_singleton_client() -> redis.Redis:
         socket_connect_timeout=_DEFAULT_TIMEOUT,
         socket_keepalive=True,
     )
+
+
+def _make_memory_client() -> redis.Redis:
+    if fakeredis is None:
+        raise RedisClientError("fakeredis is not installed; cannot use in-memory Redis mode.")
+    return fakeredis.FakeRedis()
 
 
 def _make_sentinel_client() -> redis.Redis:
@@ -64,6 +82,8 @@ _CLIENT: Optional[redis.Redis] = None
 
 def _build_client() -> redis.Redis:
     mode = os.getenv("REDIS_MODE", "single").lower()
+    if mode == "memory":
+        return _make_memory_client()
     if mode == "sentinel":
         return _make_sentinel_client()
     return _make_singleton_client()
@@ -85,6 +105,14 @@ def get_redis() -> redis.Redis:
             return _CLIENT
         except Exception as exc:  # pragma: no cover - network failures are environment-specific
             last_exc = exc
+    # Optional graceful fallback to in-memory Redis for local/dev scenarios.
+    if _is_truthy(os.getenv("REDIS_FALLBACK_TO_MEMORY", "1")):
+        try:
+            _CLIENT = _make_memory_client()
+            _LOGGER.warning("Redis unreachable; falling back to in-memory fakeredis (non-production mode).")
+            return _CLIENT
+        except Exception as exc:  # pragma: no cover - misconfiguration
+            last_exc = exc
     raise RedisClientError(f"Failed to connect to Redis after {_DEFAULT_RETRIES} attempts") from last_exc  # type: ignore[arg-type]
 
 
@@ -98,4 +126,3 @@ def ping_ok() -> bool:
 
 
 __all__ = ["get_redis", "ping_ok", "RedisClientError"]
-

@@ -50,25 +50,27 @@ flowchart TD
 
 ## Example PR Comment
 
-When PRGuard AI finishes analyzing a pull request, it posts a comment like this:
+This is a real review posted by PRGuard AI on a test PR containing intentionally planted bugs:
 
 > ## PRGuard AI Review
 >
-> **Confidence Score:** 0.74
+> **Confidence Score:** 0.77
 >
 > ### Style
-> - `MEDIUM` (line 15): Tab character used for indentation instead of spaces.
-> - `LOW` (line 88): Line exceeds 120 characters.
+> No issues detected.
 >
 > ### Logic
-> - `MEDIUM` (line 42): Bare except detected; this can hide runtime errors.
-> - `LOW` (line 67): TODO present in newly added code.
+> - `HIGH` (line 30): User-provided `probe_options` is interpolated directly into a shell command, allowing command injection.
+> - `MEDIUM` (line 31): `subprocess.run` is executed with `shell=True` and a blocking call inside an async endpoint, which can block the event loop.
+> - `HIGH` (line 41): Opening a PDF with `fitz.open` may raise an exception for malformed or non-PDF files, which is not caught and will result in a 500 error.
+> - `MEDIUM` (line 44): Cache key is based solely on the client-provided filename, causing cache collisions when different files share the same name.
+> - `LOW` (line 50): The in-memory cache grows unbounded with each unique filename, potentially leading to memory bloat over time.
 >
 > ### Security
-> - `HIGH` (line 23): Potential SQL injection pattern (string-concatenated query).
-> - `HIGH` (line 91): Possible hardcoded secret or API key.
+> - `HIGH` (line 30): User-controlled `probe_options` is concatenated into a shell command executed with `shell=True`, leading to command injection risk.
 >
 > ### Disagreement Summary
+> - logic reports high-severity issues while style does not.
 > - security reports high-severity issues while style does not.
 
 Medium and high-severity issues also get posted as **inline comments** on the specific lines in the PR diff (up to 10 per review).
@@ -134,7 +136,7 @@ Every finding carries a `confidence_source` tag that maps to a numeric weight:
 - Python 3.11+
 - Docker & Docker Compose
 - A GitHub account with a repository to monitor
-- OpenAI API key
+- NVIDIA NIM API key (get one free at build.nvidia.com)
 
 ### Docker (Recommended)
 
@@ -228,7 +230,8 @@ The client falls back to `GITHUB_TOKEN` (personal access token) if App auth is n
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `OPENAI_API_KEY` | Yes | — | OpenAI API key for LLM-powered analysis |
+| `NVIDIA_API_KEY` | Yes | — | NVIDIA NIM API key for LLM-powered analysis (gpt-oss-120b) |
+| `OPENAI_API_KEY` | No | — | Legacy OpenAI API key (fallback if NVIDIA_API_KEY not set) |
 | `GITHUB_TOKEN` | Yes* | — | GitHub PAT for PR access (fallback if App auth not configured) |
 | `GITHUB_WEBHOOK_SECRET` | Yes | — | Shared secret for HMAC signature verification |
 | `REDIS_URL` | No | `redis://redis:6379/0` | Redis connection URL for Celery broker |
@@ -266,7 +269,7 @@ prguard-ai/
 │       ├── db/              # Database layer
 │       ├── evaluation/      # Evaluation framework with precision/recall metrics
 │       ├── github/          # Webhook server, GitHub API client, App auth
-│       ├── llm/             # OpenAI client wrapper with token budgeting
+│       ├── llm/             # LLM client wrapper (NVIDIA NIM / OpenAI-compatible) with token budgeting
 │       ├── observability/   # Structured logging, OpenTelemetry tracing, Prometheus metrics, event streaming
 │       ├── reliability/     # Reliability patterns (circuit breakers, etc.)
 │       ├── schemas/         # Pydantic models (AgentOutput, Issue, PullRequestReport)
@@ -340,6 +343,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 <div align="center">
 
-Built by [Purvansh Sahu](https://github.com/purvanshh) · 3rd Year CS @ Scaler School of Technology + BITS Pilani · ML Research Intern @ IIT Madras
+Built by [Purvansh Sahu](https://github.com/purvanshh) · 3rd Year CS @ Scaler School of Technology + BITS Pilani · ML Research Intern @ IIT Madras · LLM backend powered by NVIDIA NIM (gpt-oss-120b)
 
 </div>

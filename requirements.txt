@@ -5,6 +5,7 @@ pydantic-settings>=2,<3
 PyGithub
 celery
 redis
+fakeredis
 tree-sitter
 chromadb
 openai

@@ -17,8 +17,16 @@ from prguard_ai.schemas.pr_report import PullRequestReport
 from prguard_ai.observability.tracing import get_tracer
 
 
+_REDIS_MODE = os.getenv("REDIS_MODE", "single").lower()
+_EAGER_MODE = os.getenv("CELERY_EAGER", "").lower() in {"1", "true", "yes", "on"}
+if _REDIS_MODE == "memory":
+    _EAGER_MODE = True
+
 CELERY_BROKER_URL = settings.redis_url or os.getenv("REDIS_URL", "redis://redis:6379/0")
 CELERY_BACKEND_URL = CELERY_BROKER_URL
+if _EAGER_MODE:
+    CELERY_BROKER_URL = "memory://"
+    CELERY_BACKEND_URL = "cache+memory://"
 
 celery_app = Celery("prguard_ai", broker=CELERY_BROKER_URL, backend=CELERY_BACKEND_URL)
 celery_app.conf.task_routes = {
@@ -29,6 +37,11 @@ celery_app.conf.task_routes = {
 }
 celery_app.conf.task_time_limit = 60
 celery_app.conf.task_soft_time_limit = 45
+
+if _EAGER_MODE:
+    # When Redis is unavailable (e.g., local dev without Docker), run tasks synchronously.
+    celery_app.conf.task_always_eager = True
+    celery_app.conf.task_store_eager_result = True
 
 _TRACER = get_tracer("celery")
 
@@ -88,4 +101,3 @@ __all__ = [
     "run_security_agent",
     "run_arbitrator",
 ]
-

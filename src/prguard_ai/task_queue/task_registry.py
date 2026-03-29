@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Final
 
-from task_queue.redis_client import get_redis
+from prguard_ai.task_queue.redis_client import get_redis
 
 
 _PROCESSING_TTL_SECONDS: Final[int] = 15 * 60  # 15 minutes
@@ -75,4 +75,3 @@ __all__ = [
     "acquire_global_slot",
     "release_global_slot",
 ]
-

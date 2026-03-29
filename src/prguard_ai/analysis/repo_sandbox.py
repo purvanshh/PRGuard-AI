@@ -24,6 +24,10 @@ MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024  # 2MB
 MAX_PYTHON_FILES_INDEXED = 1000
 
 
+def _is_truthy(value: str | None) -> bool:
+    return str(value).lower() in {"1", "true", "yes", "on"}
+
+
 class RepoSandboxError(RuntimeError):
     pass
 
@@ -80,7 +84,8 @@ def clone_repository(repo_url: str, pr_number: int, repo_full_name: str | None =
     Returns:
         RepoSandboxResult describing the sandbox path and computed metrics.
     """
-    if not repo_url:
+    offline_mode = _is_truthy(os.getenv("PRGUARD_OFFLINE_MODE"))
+    if not repo_url and not offline_mode:
         raise RepoSandboxError("Missing repo_url for cloning.")
     repo_full_name = repo_full_name or "repo"
     pr_id = _safe_pr_id(repo_full_name, pr_number)
@@ -91,6 +96,10 @@ def clone_repository(repo_url: str, pr_number: int, repo_full_name: str | None =
     # Ensure clean workspace for idempotency.
     if temp_path.exists():
         shutil.rmtree(temp_path, ignore_errors=True)
+
+    if offline_mode:
+        temp_path.mkdir(parents=True, exist_ok=True)
+        return RepoSandboxResult(temp_path=temp_path, python_files_indexed=0, repo_size_bytes=0)
 
     env = os.environ.copy()
     env.setdefault("GIT_TERMINAL_PROMPT", "0")
@@ -112,13 +121,14 @@ def clone_repository(repo_url: str, pr_number: int, repo_full_name: str | None =
 
 def cleanup_repository(temp_path: str | Path) -> None:
     """Delete sandbox directory after analysis (best-effort)."""
-    p = Path(temp_path)
-    if not p.exists():
+    p_resolved = Path(temp_path).resolve()
+    if not p_resolved.exists():
         return
-    if SANDBOX_ROOT not in p.resolve().parents and p.resolve() != SANDBOX_ROOT.resolve():
+    sandbox_root = SANDBOX_ROOT.resolve()
+    if sandbox_root not in p_resolved.parents and p_resolved != sandbox_root:
         # Safety: never delete outside sandbox root.
-        raise RepoSandboxError(f"Refusing to delete non-sandbox path: {p}")
-    shutil.rmtree(p, ignore_errors=True)
+        raise RepoSandboxError(f"Refusing to delete non-sandbox path: {p_resolved}")
+    shutil.rmtree(p_resolved, ignore_errors=True)
 
 
 __all__ = [
@@ -131,4 +141,3 @@ __all__ = [
     "MAX_FILE_SIZE_BYTES",
     "MAX_PYTHON_FILES_INDEXED",
 ]
-

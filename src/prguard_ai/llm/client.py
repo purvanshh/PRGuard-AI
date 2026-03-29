@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2
-DEFAULT_MODEL = "gpt-4o"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 
 MAX_TOKENS_PER_REQUEST = 2048
 MAX_TOKENS_PER_PR = 8000
@@ -28,6 +28,10 @@ MAX_TOKENS_PER_PR = 8000
 _PR_TOKEN_USAGE: Dict[str, int] = {}
 _LOCK = threading.Lock()
 _TRACER = get_tracer("llm")
+
+
+def _is_truthy(value: str | None) -> bool:
+    return str(value).lower() in {"1", "true", "yes", "on"}
 
 
 def calculate_openai_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -51,16 +55,21 @@ def calculate_openai_cost(model: str, prompt_tokens: int, completion_tokens: int
     elif "gpt-3.5" in m:
         prompt_rate = 0.5 / 1_000_000
         completion_rate = 1.5 / 1_000_000
+    elif "gpt-oss-120b" in m:
+        prompt_rate = 1.2 / 1_000_000
+        completion_rate = 1.2 / 1_000_000
 
     cost = prompt_tokens * prompt_rate + completion_tokens * completion_rate
     return float(round(cost, 6))
 
-def _configure_openai() -> None:
-    if getattr(openai, "api_key", None):
-        return
-    if not settings.openai_api_key:
-        raise RuntimeError("OPENAI_API_KEY is not configured.")
-    openai.api_key = settings.openai_api_key
+def _get_client() -> openai.OpenAI:
+    api_key = os.getenv("NVIDIA_API_KEY") or settings.openai_api_key
+    if not api_key:
+        raise RuntimeError("NVIDIA_API_KEY is not configured.")
+    return openai.OpenAI(
+        base_url="https://integrate.api.nvidia.com/v1",
+        api_key=api_key,
+    )
 
 
 def _check_and_update_budget(pr_id: str | None, requested_tokens: int) -> None:
@@ -91,12 +100,17 @@ def generate_analysis(
     configured (e.g. in local or CI test runs), this returns a deterministic
     stub response instead of calling the external API.
     """
-    # Offline/test mode: when no API key or when running under pytest, always return a stub.
-    if not settings.openai_api_key or "PYTEST_CURRENT_TEST" in os.environ:
-        if not settings.openai_api_key:
-            logger.warning("OPENAI_API_KEY not set; returning offline stub response from generate_analysis.")
+    offline_mode = _is_truthy(os.getenv("PRGUARD_OFFLINE_MODE"))
+    nvidia_key = os.getenv("NVIDIA_API_KEY") or settings.openai_api_key
+
+    # Offline/test mode: when explicitly disabled or no API key, return a stub response.
+    if offline_mode or not nvidia_key or "PYTEST_CURRENT_TEST" in os.environ:
+        if offline_mode:
+            logger.info("Offline mode enabled; returning stub response from generate_analysis.")
+        elif not nvidia_key:
+            logger.warning("NVIDIA_API_KEY not set; returning offline stub response from generate_analysis.")
         else:
-            logger.info("Detected pytest run; skipping external OpenAI call and returning stub response.")
+            logger.info("Detected pytest run; skipping external API call and returning stub response.")
         meta: Dict[str, Any] = {
             "model": "offline-stub",
             "prompt_tokens": 0,
@@ -107,7 +121,7 @@ def generate_analysis(
         # Agents expect JSON; an empty list means "no issues".
         return "[]", meta
 
-    _configure_openai()
+    _get_client()  # validate key early
 
     requested = min(max_tokens, MAX_TOKENS_PER_REQUEST)
     _check_and_update_budget(pr_id, requested)
@@ -127,15 +141,23 @@ def generate_analysis(
         for attempt in range(1, MAX_RETRIES + 1):
             span.set_attribute("llm.attempt", attempt)
             try:
-                response = openai.ChatCompletion.create(
+                client = _get_client()
+                response = client.chat.completions.create(
                     model=model,
-                    messages=[{"role": "user", "content": prompt}],
+                    messages=[
+                        {"role": "system", "content": "Reasoning: low"},
+                        {"role": "user", "content": prompt},
+                    ],
                     max_tokens=requested,
                     temperature=temperature,
                 )
-                message = response["choices"][0]["message"]["content"]
-
-                usage = response.get("usage", {}) or {}
+                message = response.choices[0].message.content or ""
+                usage_obj = response.usage
+                usage = {
+                    "prompt_tokens": usage_obj.prompt_tokens if usage_obj else 0,
+                    "completion_tokens": usage_obj.completion_tokens if usage_obj else 0,
+                    "total_tokens": usage_obj.total_tokens if usage_obj else 0,
+                }
                 meta = {
                     "model": model,
                     "prompt_tokens": usage.get("prompt_tokens", 0),
@@ -166,12 +188,12 @@ def generate_analysis(
                     add_usage(repo_name, estimated_cost)
                 LLM_TOKENS_USED.labels(agent="unknown", model=model).inc(total_tokens)
                 return message, meta
-            except openai.error.RateLimitError as exc:  # type: ignore[attr-defined]
+            except openai.RateLimitError as exc:
                 last_error = exc
                 span.record_exception(exc)
-                logger.warning("OpenAI rate limit hit (attempt %s/%s). Backing off.", attempt, MAX_RETRIES)
+                logger.warning("Rate limit hit (attempt %s/%s). Backing off.", attempt, MAX_RETRIES)
                 time.sleep(RETRY_BACKOFF_SECONDS * attempt)
-            except openai.error.OpenAIError as exc:  # type: ignore[attr-defined]
+            except openai.OpenAIError as exc:
                 last_error = exc
                 span.record_exception(exc)
                 logger.error("OpenAI API error: %s", exc)
@@ -196,5 +218,4 @@ __all__ = [
     "MAX_TOKENS_PER_REQUEST",
     "MAX_TOKENS_PER_PR",
 ]
-
 

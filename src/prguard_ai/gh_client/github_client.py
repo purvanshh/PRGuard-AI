@@ -3,14 +3,26 @@
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 from typing import Dict, List, Optional
+
+import requests as _requests
 
 from github import Github
 
 from prguard_ai.config.settings import settings
-from prguard_ai.github.app_auth import get_installation_token
+from prguard_ai.gh_client.app_auth import get_installation_token
 
 logger = logging.getLogger(__name__)
+
+
+def _is_truthy(value: str | None) -> bool:
+    return str(value).lower() in {"1", "true", "yes", "on"}
+
+
+def _offline_mode_enabled() -> bool:
+    return _is_truthy(os.getenv("PRGUARD_OFFLINE_MODE", "0"))
 
 
 def _get_github_client(token: Optional[str] = None) -> Github:
@@ -31,6 +43,8 @@ def _get_github_client(token: Optional[str] = None) -> Github:
             effective_token = settings.github_token
 
     if not effective_token:
+        if _offline_mode_enabled():
+            raise RuntimeError("Offline mode enabled; GitHub client is not available.")
         raise RuntimeError("No GitHub authentication token available (GitHub App and PAT missing).")
 
     return Github(effective_token)
@@ -44,11 +58,24 @@ def get_pr_diff(
     """
     Fetch the unified diff for a pull request.
     """
-    gh = _get_github_client(token)
-    repo = gh.get_repo(repo_full_name)
-    pr = repo.get_pull(pr_number)
-    diff = repo.compare(pr.base.sha, pr.head.sha)
-    return diff.diff
+    if _offline_mode_enabled():
+        fake_path = os.getenv("PRGUARD_FAKE_DIFF_PATH")
+        if not fake_path:
+            fake_path = Path(__file__).resolve().parents[3] / "fixtures" / "sample_diff.txt"
+        diff_path = Path(fake_path)
+        if not diff_path.exists():
+            raise RuntimeError(f"Offline mode enabled but fake diff not found at {diff_path}")
+        logger.info("Offline mode: returning diff from %s", diff_path)
+        return diff_path.read_text(encoding="utf-8")
+
+    headers = {
+        "Authorization": f"token {token or settings.github_token}",
+        "Accept": "application/vnd.github.v3.diff",
+    }
+    url = f"https://api.github.com/repos/{repo_full_name}/pulls/{pr_number}"
+    response = _requests.get(url, headers=headers)
+    response.raise_for_status()
+    return response.text
 
 
 def format_pr_review(report: dict) -> str:
@@ -103,6 +130,9 @@ def post_pr_comment(
     """
     Post a review-style comment on a pull request.
     """
+    if _offline_mode_enabled():
+        logger.info("Offline mode: skipping PR comment post for %s#%s", repo_full_name, pr_number)
+        return
     gh = _get_github_client(token)
     repo = gh.get_repo(repo_full_name)
     pr = repo.get_pull(pr_number)
@@ -121,6 +151,9 @@ def post_inline_comment(
     """
     Post an inline comment on a specific file/line in a pull request.
     """
+    if _offline_mode_enabled():
+        logger.info("Offline mode: skipping inline comment for %s#%s at %s:%s", repo_full_name, pr_number, path, line)
+        return
     gh = _get_github_client(token)
     repo = gh.get_repo(repo_full_name)
     pr = repo.get_pull(pr_number)
@@ -136,4 +169,3 @@ def post_inline_comment(
 
 
 __all__ = ["get_pr_diff", "post_pr_comment", "format_pr_review", "post_inline_comment"]
-

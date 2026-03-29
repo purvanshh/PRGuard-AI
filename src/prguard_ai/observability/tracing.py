@@ -11,8 +11,15 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 
+def _is_truthy(value: str | None) -> bool:
+    return str(value).lower() in {"1", "true", "yes", "on"}
+
+
 def configure_tracing(service_name: str) -> None:
     """Configure global tracer provider and OTLP exporter."""
+    if _is_truthy(os.getenv("PRGUARD_OFFLINE_MODE")):
+        # In offline/dev mode, skip configuring OTLP to avoid noisy failures.
+        return
     if isinstance(trace.get_tracer_provider(), TracerProvider):
         # Already configured.
         return
@@ -34,4 +41,3 @@ def get_tracer(name: str | None = None):
 
 
 __all__ = ["configure_tracing", "get_tracer"]
-

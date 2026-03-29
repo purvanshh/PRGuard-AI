@@ -15,7 +15,7 @@ from prguard_ai.config.settings import settings
 from prguard_ai.analysis.repo_indexer import initialize_repo_index
 from prguard_ai.analysis.code_graph import build_code_graph
 from prguard_ai.analysis.repo_sandbox import RepoSandboxError, cleanup_repository, clone_repository
-from prguard_ai.github.github_client import (
+from prguard_ai.gh_client.github_client import (
     format_pr_review,
     get_pr_diff,
     post_pr_comment,
