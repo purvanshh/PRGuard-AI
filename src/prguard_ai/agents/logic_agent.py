@@ -8,6 +8,7 @@ from typing import Any, Dict, List
 
 from prguard_ai.analysis.ast_parser import AstSummary, summarize_source
 from prguard_ai.analysis.diff_parser import DiffHunk, extract_context_lines, parse_diff
+from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
 from prguard_ai.llm.client import generate_analysis
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
@@ -151,9 +152,8 @@ def analyze_logic(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -
         llm_issues = _parse_llm_issues(text)
 
     all_issues = issues + llm_issues
-    confidence = 0.9 if all_issues else 0.5
+    confidence = estimate_issue_confidence(all_issues, empty_confidence=0.45)
     return AgentOutput(agent="logic", confidence=confidence, issues=all_issues)
 
 
 __all__ = ["analyze_logic"]
-

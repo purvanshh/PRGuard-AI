@@ -12,11 +12,46 @@ CONFIDENCE_WEIGHTS: Dict[str, float] = {
     "llm_reasoning": 0.6,
     "inferred": 0.3,
 }
+SEVERITY_CONFIDENCE_WEIGHTS: Dict[str, float] = {
+    "low": 0.45,
+    "medium": 0.65,
+    "high": 0.85,
+}
 
 
 def _weight_for_source(source: str) -> float:
     """Return a numeric weight for a confidence source label."""
     return CONFIDENCE_WEIGHTS.get(source, CONFIDENCE_WEIGHTS["inferred"])
+
+
+def estimate_issue_confidence(
+    issues: Iterable[Issue],
+    *,
+    empty_confidence: float,
+    max_issue_bonus: float = 0.09,
+) -> float:
+    """
+    Estimate an agent confidence directly from the detected issues.
+
+    This keeps base agent confidence aligned with the quality of the findings
+    before the arbitrator applies its own cross-agent refinement.
+    """
+    issues_list = list(issues)
+    if not issues_list:
+        return max(0.0, min(1.0, empty_confidence))
+
+    combined_scores = []
+    for issue in issues_list:
+        source_score = _weight_for_source(issue.confidence_source)
+        severity_score = SEVERITY_CONFIDENCE_WEIGHTS.get(
+            issue.severity.lower(),
+            SEVERITY_CONFIDENCE_WEIGHTS["low"],
+        )
+        combined_scores.append((source_score + severity_score) / 2.0)
+
+    avg_score = sum(combined_scores) / len(combined_scores)
+    issue_bonus = min(len(issues_list), 3) * (max_issue_bonus / 3.0)
+    return max(0.0, min(1.0, avg_score + issue_bonus))
 
 
 def calculate_agent_confidence(output: AgentOutput) -> float:
@@ -63,5 +98,4 @@ def aggregate_confidence(outputs: Iterable[AgentOutput]) -> float:
     return base_avg
 
 
-__all__ = ["calculate_agent_confidence", "aggregate_confidence"]
-
+__all__ = ["calculate_agent_confidence", "aggregate_confidence", "estimate_issue_confidence"]
