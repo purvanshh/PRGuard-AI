@@ -35,8 +35,9 @@ celery_app.conf.task_routes = {
     "task_queue.celery_app.run_security_agent": {"queue": "security"},
     "task_queue.celery_app.run_arbitrator": {"queue": "arbitrator"},
 }
-celery_app.conf.task_time_limit = 60
-celery_app.conf.task_soft_time_limit = 45
+celery_app.conf.task_time_limit = 300
+celery_app.conf.task_soft_time_limit = 240
+# Don't use eager mode - let tasks run async normally
 
 if _EAGER_MODE:
     # When Redis is unavailable (e.g., local dev without Docker), run tasks synchronously.

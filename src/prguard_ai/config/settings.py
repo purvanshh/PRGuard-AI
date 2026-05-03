@@ -15,10 +15,9 @@ class Settings(BaseSettings):
     github_webhook_secret: str = Field("", env="GITHUB_WEBHOOK_SECRET")
     redis_url: str = Field("redis://redis:6379/0", env="REDIS_URL")
     chroma_persist_dir: str = Field(".chroma", env="CHROMA_PERSIST_DIR")
+    prguard_offline_mode: bool = Field(False, env="PRGUARD_OFFLINE_MODE")
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = False
+    model_config = {"extra": "ignore"}
 
 
 settings = Settings()

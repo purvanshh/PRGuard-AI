@@ -343,11 +343,11 @@ async def github_webhook(
             security_started = time.time()
             security_result = run_security_agent.delay(diff_text, repo_metadata)
 
-            style_output_dict = style_result.get(timeout=60)
+            style_output_dict = style_result.get(timeout=400)
             style_finished = time.time()
-            logic_output_dict = logic_result.get(timeout=60)
+            logic_output_dict = logic_result.get(timeout=400)
             logic_finished = time.time()
-            security_output_dict = security_result.get(timeout=60)
+            security_output_dict = security_result.get(timeout=400)
             security_finished = time.time()
 
             style_output = AgentOutput(**style_output_dict)
