@@ -63,12 +63,17 @@ def calculate_openai_cost(model: str, prompt_tokens: int, completion_tokens: int
     return float(round(cost, 6))
 
 def _get_client() -> openai.OpenAI:
-    api_key = os.getenv("NVIDIA_API_KEY") or settings.openai_api_key
-    if not api_key:
-        raise RuntimeError("NVIDIA_API_KEY is not configured.")
+    nvidia_key = os.getenv("NVIDIA_API_KEY")
+    if nvidia_key:
+        return openai.OpenAI(
+            base_url="https://integrate.api.nvidia.com/v1",
+            api_key=nvidia_key,
+        )
+    openai_key = settings.openai_api_key
+    if not openai_key:
+        raise RuntimeError("NVIDIA_API_KEY or OPENAI_API_KEY is not configured.")
     return openai.OpenAI(
-        base_url="https://integrate.api.nvidia.com/v1",
-        api_key=api_key,
+        api_key=openai_key,
     )
 
 
@@ -120,6 +125,10 @@ def generate_analysis(
         }
         # Agents expect JSON; an empty list means "no issues".
         return "[]", meta
+
+    if not os.getenv("NVIDIA_API_KEY") and settings.openai_api_key:
+        if model == DEFAULT_MODEL:
+            model = "gpt-4o"
 
     _get_client()  # validate key early
 

@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     chroma_persist_dir: str = Field(".chroma", env="CHROMA_PERSIST_DIR")
     prguard_offline_mode: bool = Field(False, env="PRGUARD_OFFLINE_MODE")
 
-    model_config = {"extra": "ignore"}
+    model_config = {"extra": "ignore", "env_file": ".env"}
 
 
 settings = Settings()
