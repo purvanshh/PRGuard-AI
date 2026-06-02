@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, List
 
-from prguard_ai.analysis.ast_parser import AstSummary, summarize_source
+from prguard_ai.analysis.ast_parser import AstSummary, detect_language, summarize_source
 from prguard_ai.analysis.diff_parser import DiffHunk, extract_context_lines, parse_diff
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
 from prguard_ai.llm.client import generate_analysis
@@ -27,15 +28,35 @@ def _load_prompt() -> str:
 
 
 def _build_ast_summary_for_hunks(hunks: List[DiffHunk]) -> AstSummary | None:
-    added_code_lines: List[str] = []
+    added_code_by_file: dict[str, List[str]] = defaultdict(list)
     for h in hunks:
+        if detect_language(h.file_path) is None:
+            continue
         for line in h.lines:
             if line.line_type == "add" and line.content.strip():
-                added_code_lines.append(line.content)
-    if not added_code_lines:
+                added_code_by_file[h.file_path].append(line.content)
+    if not added_code_by_file:
         return None
-    snippet = "\n".join(added_code_lines)
-    return summarize_source(snippet)
+
+    combined_functions: List[Dict[str, Any]] = []
+    combined_variables: set[str] = set()
+    combined_controls: List[Dict[str, Any]] = []
+    languages: set[str] = set()
+
+    for file_path, added_lines in added_code_by_file.items():
+        summary = summarize_source("\n".join(added_lines), file_path=file_path)
+        combined_functions.extend(summary.functions)
+        combined_variables.update(summary.variables)
+        combined_controls.extend(summary.control_structures)
+        if summary.language:
+            languages.add(summary.language)
+
+    return AstSummary(
+        functions=combined_functions,
+        variables=sorted(combined_variables),
+        control_structures=combined_controls,
+        language=next(iter(languages)) if len(languages) == 1 else "mixed",
+    )
 
 
 def _build_llm_input(
@@ -52,6 +73,7 @@ def _build_llm_input(
                 "functions": ast_summary.functions,
                 "variables": ast_summary.variables,
                 "control_structures": ast_summary.control_structures,
+                "language": ast_summary.language,
             },
             indent=2,
         )

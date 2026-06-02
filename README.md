@@ -97,10 +97,10 @@ Detects logical defects using AST analysis and contextual reasoning:
 | Pass | Method | What It Catches |
 |------|--------|-----------------|
 | **Rule-based** | Pattern matching on added lines | Bare `except:`, unresolved `TODO`s |
-| **AST-informed** | `tree-sitter` parse &rarr; function/variable/control-flow summary | Function structure, variable usage, control flow patterns |
+| **AST-informed** | `tree-sitter` parse &rarr; function/variable/control-flow summary | Function structure, variable usage, control flow patterns across Python, Go, TypeScript, and Rust |
 | **LLM-guided** | Prompt + AST summary + surrounding context | Off-by-one errors, null handling, boundary conditions, unhandled exceptions |
 
-The logic agent builds an AST summary (`analysis/ast_parser.py`) of changed code and feeds it alongside surrounding context lines to the LLM for deeper reasoning.
+The logic agent builds a per-file AST summary (`analysis/ast_parser.py`) of changed code and feeds it alongside surrounding context lines to the LLM for deeper reasoning. Tree-sitter-backed parsing currently supports Python, Go, TypeScript, and Rust, and mixed-language PRs are summarized file-by-file before being merged for the review prompt.
 
 ### Security Agent
 
@@ -321,7 +321,7 @@ python -c "from prguard_ai.evaluation.evaluator import evaluate_pr; print(evalua
 
 ## Roadmap
 
-- [ ] **Multi-language support** — extend tree-sitter parsing beyond Python (Go, TypeScript, Rust)
+- [x] **Multi-language support** — tree-sitter parsing now supports Python, Go, TypeScript, and Rust
 - [ ] **Custom rule configuration** — per-repo `.prguard.yml` for tuning agent thresholds
 - [ ] **GitHub App Marketplace listing** — one-click install for any repository
 - [ ] **PR review suggestions** — use GitHub's suggestion API for auto-fixable issues

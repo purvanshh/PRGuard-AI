@@ -7,6 +7,10 @@ celery
 redis
 fakeredis
 tree-sitter
+tree-sitter-python
+tree-sitter-go
+tree-sitter-rust
+tree-sitter-typescript
 chromadb
 openai
 pytest
