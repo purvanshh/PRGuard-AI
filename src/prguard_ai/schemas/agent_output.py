@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class Issue(BaseModel):
@@ -22,7 +22,8 @@ class Issue(BaseModel):
         description="Optional path to the file where the issue was detected.",
     )
 
-    @validator("severity")
+    @field_validator("severity")
+    @classmethod
     def _normalize_severity(cls, value: str) -> str:
         return value.lower()
 

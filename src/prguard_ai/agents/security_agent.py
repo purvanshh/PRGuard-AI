@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
 from prguard_ai.analysis.diff_parser import DiffHunk, parse_diff
-from prguard_ai.llm.client import generate_analysis
+from prguard_ai.llm.client import extract_json_from_llm_response, generate_analysis
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
-PROMPT_PATH = Path("prompts/security_prompt.txt")
+logger = logging.getLogger(__name__)
+
+PROMPT_PATH = Path(__file__).resolve().parent.parent.parent.parent / "prompts" / "security_prompt.txt"
 MAX_FILES_PER_PR = 50
 MAX_TOKENS_PER_AGENT = 2000
 
@@ -46,11 +49,14 @@ def detect_hardcoded_secrets(line: str) -> bool:
 
 
 def _parse_llm_issues(raw: str) -> List[Issue]:
+    clean = extract_json_from_llm_response(raw)
     try:
-        data = json.loads(raw)
+        data = json.loads(clean)
     except json.JSONDecodeError:
+        logger.warning("Failed to parse LLM security response as JSON. Raw: %s", raw[:500])
         return []
     if not isinstance(data, list):
+        logger.warning("LLM security response is not a JSON array. Raw: %s", raw[:500])
         return []
     out: List[Issue] = []
     for item in data:
@@ -64,7 +70,8 @@ def _parse_llm_issues(raw: str) -> List[Issue]:
                     confidence_source=str(item.get("confidence_source", "llm_reasoning")),
                 )
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to create Issue from LLM security item: %s", exc)
             continue
     return out
 

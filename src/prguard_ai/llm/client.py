@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import threading
 import time
 from typing import Any, Dict, Tuple
@@ -17,6 +19,9 @@ from prguard_ai.observability.tracing import get_tracer
 from prguard_ai.cost.budget_manager import add_usage, check_budget
 
 logger = logging.getLogger(__name__)
+
+_JSON_ARRAY_PATTERN = re.compile(r"\[[\s\S]*\]", re.MULTILINE)
+_MARKDOWN_FENCE_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.MULTILINE)
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2
@@ -32,6 +37,35 @@ _TRACER = get_tracer("llm")
 
 def _is_truthy(value: str | None) -> bool:
     return str(value).lower() in {"1", "true", "yes", "on"}
+
+
+def extract_json_from_llm_response(raw: str) -> str:
+    """
+    Robustly extract a JSON array from an LLM response.
+
+    Handles:
+    - Clean JSON
+    - Markdown code fences (```json ... ```)
+    - Text before/after the JSON
+    - Leading/trailing whitespace
+    """
+    if not raw or not raw.strip():
+        return "[]"
+
+    stripped = raw.strip()
+
+    json_match = _MARKDOWN_FENCE_PATTERN.search(stripped)
+    if json_match:
+        inner = json_match.group(1).strip()
+        if inner:
+            stripped = inner
+
+    array_match = _JSON_ARRAY_PATTERN.search(stripped)
+    if array_match:
+        stripped = array_match.group(0)
+
+    stripped = stripped.strip()
+    return stripped if stripped else "[]"
 
 
 def calculate_openai_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -222,6 +256,7 @@ def generate_analysis(
 
 
 __all__ = [
+    "extract_json_from_llm_response",
     "generate_analysis",
     "DEFAULT_MODEL",
     "MAX_TOKENS_PER_REQUEST",

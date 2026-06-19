@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import Any, Dict, List
 
 from prguard_ai.analysis.diff_parser import DiffHunk, extract_changed_files, parse_diff
 from prguard_ai.analysis.repo_indexer import retrieve_similar_code
-from prguard_ai.llm.client import generate_analysis
+from prguard_ai.llm.client import extract_json_from_llm_response, generate_analysis
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
-PROMPT_PATH = Path("prompts/style_prompt.txt")
+logger = logging.getLogger(__name__)
+
+PROMPT_PATH = Path(__file__).resolve().parent.parent.parent.parent / "prompts" / "style_prompt.txt"
 MAX_FILES_PER_PR = 50
 MAX_TOKENS_PER_AGENT = 1500
 FRONTEND_EXTENSIONS = {".css", ".scss", ".sass", ".less", ".html", ".htm", ".jsx", ".tsx", ".vue"}
@@ -62,12 +65,15 @@ def _build_llm_input(diff_text: str, repo_examples: List[str]) -> str:
 
 
 def _parse_llm_issues(raw: str) -> List[Issue]:
+    clean = extract_json_from_llm_response(raw)
     try:
-        data = json.loads(raw)
+        data = json.loads(clean)
     except json.JSONDecodeError:
+        logger.warning("Failed to parse LLM style response as JSON. Raw: %s", raw[:500])
         return []
     issues: List[Issue] = []
     if not isinstance(data, list):
+        logger.warning("LLM style response is not a JSON array. Raw: %s", raw[:500])
         return []
     for item in data:
         try:
@@ -81,7 +87,8 @@ def _parse_llm_issues(raw: str) -> List[Issue]:
                     file_path=str(item.get("file_path")) if item.get("file_path") else None,
                 )
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to create Issue from LLM style item: %s", exc)
             continue
     return issues
 
