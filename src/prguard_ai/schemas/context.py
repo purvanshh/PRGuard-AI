@@ -1,8 +1,18 @@
-from __future__ import annotations
-
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 from prguard_ai.schemas.agent_output import AgentOutput
+
+
+class DialogueTurn(BaseModel):
+    """Represents a single message sent during the multi-agent dialogue."""
+
+    speaker: str = Field(..., description="The name of the agent speaking.")
+    message: str = Field(..., description="The natural language message sent by the agent.")
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        description="Timestamp when the message was sent.",
+    )
 
 
 class ReviewContext(BaseModel):
@@ -17,6 +27,9 @@ class ReviewContext(BaseModel):
         default_factory=dict, description="Initial and refined outputs from each agent."
     )
     round: int = Field(default=0, description="Current refinement/dialogue round.")
+    dialogue: List[DialogueTurn] = Field(
+        default_factory=list, description="Debate and dialogue history between the agents."
+    )
 
 
-__all__ = ["ReviewContext"]
+__all__ = ["ReviewContext", "DialogueTurn"]

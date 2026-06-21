@@ -299,8 +299,8 @@ def analyze_style(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -
 
 class StyleAgent:
     @staticmethod
-    def refine(initial_output: AgentOutput, context: ReviewContext) -> AgentOutput:
-        """Refine style agent issues based on the shared context of other agents."""
+    def refine(initial_output: AgentOutput, context: ReviewContext) -> tuple[str, AgentOutput]:
+        """Refine style agent issues and generate a dialogue message based on context."""
         from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
         from prguard_ai.schemas.context import ReviewContext
 
@@ -310,7 +310,7 @@ class StyleAgent:
         else:
             refine_prompt_base = (
                 "You are a code review assistant focusing on STYLE and CONSISTENCY refinement. "
-                "Respond with a JSON array of issues."
+                "Respond with a JSON object containing message and issues."
             )
 
         own_findings_str = json.dumps([issue.dict() for issue in initial_output.issues], indent=2)
@@ -323,17 +323,54 @@ class StyleAgent:
                 )
         other_findings_str = "\n\n".join(other_findings_list)
 
+        # Build dialogue history string
+        dialogue_turns = []
+        for turn in context.dialogue:
+            dialogue_turns.append(f"[{turn.speaker}]: {turn.message}")
+        dialogue_str = "\n".join(dialogue_turns)
+
         prompt = (
             f"{refine_prompt_base}\n\n"
             f"--- Git Diff ---\n{context.diff_text}\n\n"
             f"--- Your Initial Findings ---\n{own_findings_str}\n\n"
-            f"--- Other Agents' Findings ---\n{other_findings_str}\n"
+            f"--- Other Agents' Findings ---\n{other_findings_str}\n\n"
+            f"--- Dialogue History ---\n{dialogue_str}\n"
         )
 
         pr_id = context.repo_metadata.get("pr_id") if context.repo_metadata else context.pr_id
         text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
 
-        refined_issues = _parse_llm_issues(text)
+        # Parse refined response
+        from prguard_ai.llm.client import extract_json_obj_from_llm_response
+        clean = extract_json_obj_from_llm_response(text)
+        message = ""
+        refined_issues_data = []
+        try:
+            data = json.loads(clean)
+            if isinstance(data, dict):
+                message = str(data.get("message") or "")
+                refined_issues_data = data.get("issues") or []
+            elif isinstance(data, list):
+                refined_issues_data = data
+        except Exception:
+            logger.warning("Failed to parse refinement response as JSON. Raw: %s", text[:500])
+
+        refined_issues: List[Issue] = []
+        for item in refined_issues_data:
+            try:
+                refined_issues.append(
+                    Issue(
+                        line=int(item.get("line", 1)),
+                        severity=str(item.get("severity", "low")),
+                        message=str(item.get("message", "")),
+                        evidence=str(item.get("evidence", "")),
+                        confidence_source=str(item.get("confidence_source", "llm_reasoning")),
+                        file_path=str(item.get("file_path")) if item.get("file_path") else None,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("Failed to parse refined issue: %s", exc)
+                continue
 
         # For files that are checked, attach file path context back if LLM lost it
         relevant_files = extract_changed_files(context.diff_text)
@@ -353,7 +390,7 @@ class StyleAgent:
             final_issues.append(issue)
 
         confidence = estimate_issue_confidence(final_issues, empty_confidence=0.5)
-        return AgentOutput(agent="style", confidence=confidence, issues=final_issues)
+        return message, AgentOutput(agent="style", confidence=confidence, issues=final_issues)
 
 
 __all__ = ["analyze_style", "StyleAgent"]

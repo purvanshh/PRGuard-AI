@@ -63,25 +63,74 @@ def review_pr(pr_id: str, diff_text: str, repo_metadata: Dict[str, Any] | None =
         )
         store_review_context(pr_id, ctx)
 
-        # 3. Launch refinement tasks in parallel
-        refine_grp = group(
-            refine_agent.s(pr_id, "style"),
-            refine_agent.s(pr_id, "logic"),
-            refine_agent.s(pr_id, "security"),
-        )
-        refine_result = refine_grp.apply_async()
-        refined_outputs = refine_result.get(timeout=400)
+        # 3. Dialogue & Debate loop (up to max_rounds)
+        max_rounds = 3
+        consecutive_no_change_rounds = 0
 
-        # Merge refined outputs back into context to ensure full consistency
-        ctx = get_review_context(pr_id)
-        if not ctx:
-            raise ValueError(f"Context missing in Redis for PR {pr_id} after refinement")
+        # Helper to compare issues
+        def _issues_changed(issues_a, issues_b) -> bool:
+            if len(issues_a) != len(issues_b):
+                return True
+            def _to_set(issues):
+                return {(i.line, i.severity, i.message, i.file_path) for i in issues}
+            return _to_set(issues_a) != _to_set(issues_b)
 
-        for out_dict in refined_outputs:
-            output = AgentOutput(**out_dict)
-            ctx.agent_outputs[output.agent] = output
-        ctx.round = 1
-        store_review_context(pr_id, ctx)
+        from prguard_ai.agents.coordinator import CoordinatorAgent
+        from prguard_ai.schemas.context import DialogueTurn
+
+        for round_num in range(1, max_rounds + 1):
+            ctx.round = round_num
+            store_review_context(pr_id, ctx)
+
+            # Launch refinement tasks in parallel
+            refine_grp = group(
+                refine_agent.s(pr_id, "style"),
+                refine_agent.s(pr_id, "logic"),
+                refine_agent.s(pr_id, "security"),
+            )
+            refine_result = refine_grp.apply_async()
+            refined_results = refine_result.get(timeout=400)
+
+            # Retrieve context fresh to apply updates
+            ctx = get_review_context(pr_id)
+            if not ctx:
+                raise ValueError(f"Context missing in Redis for PR {pr_id} during round {round_num}")
+
+            # Track changes to agent findings
+            round_changed = False
+
+            # Process each agent's refinement response
+            for res in refined_results:
+                msg = res.get("message") or ""
+                out_dict = res.get("refined_output")
+                if not out_dict:
+                    continue
+                output = AgentOutput(**out_dict)
+
+                # Append dialogue turn if there is a message
+                if msg.strip():
+                    ctx.dialogue.append(
+                        DialogueTurn(speaker=output.agent, message=msg)
+                    )
+
+                # Check if issues changed from previous round
+                prev_output = ctx.agent_outputs.get(output.agent)
+                if not prev_output or _issues_changed(prev_output.issues, output.issues):
+                    round_changed = True
+
+                ctx.agent_outputs[output.agent] = output
+
+            if not round_changed:
+                consecutive_no_change_rounds += 1
+            else:
+                consecutive_no_change_rounds = 0
+
+            # Store updated context
+            store_review_context(pr_id, ctx)
+
+            # Check stopping conditions via Coordinator
+            if CoordinatorAgent.should_stop(ctx, max_rounds=max_rounds, consecutive_no_change_rounds=consecutive_no_change_rounds):
+                break
 
         # 4. Pass context to arbitrator
         report = arbitrate_confidence(ctx)

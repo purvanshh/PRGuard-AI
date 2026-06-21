@@ -118,12 +118,15 @@ def refine_agent(pr_id: str, agent_name: str) -> dict:
 
         agent = get_agent_by_name(agent_name)
         initial = ctx.agent_outputs[agent_name]
-        refined = agent.refine(initial, ctx)
+        message, refined = agent.refine(initial, ctx)
 
-        # Update context in Redis
+        # Update context in Redis (best-effort write; orchestrator performs final consistent merge)
         ctx.agent_outputs[agent_name] = refined
         store_review_context(pr_id, ctx)
-        return refined.dict()
+        return {
+            "message": message,
+            "refined_output": refined.dict()
+        }
 
 
 __all__ = [

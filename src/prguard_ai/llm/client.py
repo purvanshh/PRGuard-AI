@@ -21,6 +21,7 @@ from prguard_ai.cost.budget_manager import add_usage, check_budget
 logger = logging.getLogger(__name__)
 
 _JSON_ARRAY_PATTERN = re.compile(r"\[[\s\S]*\]", re.MULTILINE)
+_JSON_OBJECT_PATTERN = re.compile(r"\{[\s\S]*\}", re.MULTILINE)
 _MARKDOWN_FENCE_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.MULTILINE)
 
 MAX_RETRIES = 3
@@ -66,6 +67,29 @@ def extract_json_from_llm_response(raw: str) -> str:
 
     stripped = stripped.strip()
     return stripped if stripped else "[]"
+
+
+def extract_json_obj_from_llm_response(raw: str) -> str:
+    """
+    Robustly extract a JSON object from an LLM response.
+    """
+    if not raw or not raw.strip():
+        return "{}"
+
+    stripped = raw.strip()
+
+    json_match = _MARKDOWN_FENCE_PATTERN.search(stripped)
+    if json_match:
+        inner = json_match.group(1).strip()
+        if inner:
+            stripped = inner
+
+    obj_match = _JSON_OBJECT_PATTERN.search(stripped)
+    if obj_match:
+        stripped = obj_match.group(0)
+
+    stripped = stripped.strip()
+    return stripped if stripped else "{}"
 
 
 def calculate_openai_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -257,6 +281,7 @@ def generate_analysis(
 
 __all__ = [
     "extract_json_from_llm_response",
+    "extract_json_obj_from_llm_response",
     "generate_analysis",
     "DEFAULT_MODEL",
     "MAX_TOKENS_PER_REQUEST",
