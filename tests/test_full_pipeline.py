@@ -41,9 +41,17 @@ def test_full_pipeline_with_sample_diff() -> None:
     assert isinstance(logic_output, AgentOutput)
     assert isinstance(security_output, AgentOutput)
 
-    report: PullRequestReport = arbitrate_confidence(
-        [style_output, logic_output, security_output]
+    from prguard_ai.schemas.context import ReviewContext
+    context = ReviewContext(
+        pr_id="owner/repo#1",
+        diff_text=diff_text,
+        agent_outputs={
+            "style": style_output,
+            "logic": logic_output,
+            "security": security_output
+        }
     )
+    report: PullRequestReport = arbitrate_confidence(context)
 
     assert isinstance(report, PullRequestReport)
     assert 0.0 <= report.overall_confidence <= 1.0

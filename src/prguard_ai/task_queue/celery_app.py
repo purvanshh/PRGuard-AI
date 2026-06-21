@@ -34,6 +34,8 @@ celery_app.conf.task_routes = {
     "task_queue.celery_app.run_logic_agent": {"queue": "logic"},
     "task_queue.celery_app.run_security_agent": {"queue": "security"},
     "task_queue.celery_app.run_arbitrator": {"queue": "arbitrator"},
+    "task_queue.celery_app.refine_agent": {"queue": "refinement"},
+    "task_queue.orchestrator.review_pr": {"queue": "orchestrator"},
 }
 celery_app.conf.task_time_limit = 300
 celery_app.conf.task_soft_time_limit = 240
@@ -83,9 +85,15 @@ def run_security_agent(diff_text: str, repo_metadata: Dict[str, Any] | None = No
 @celery_app.task(name="task_queue.celery_app.run_arbitrator")
 def run_arbitrator(agent_outputs: List[Dict[str, Any]]) -> dict:
     """Celery task that runs the confidence arbitrator."""
+    from prguard_ai.schemas.context import ReviewContext
     with _TRACER.start_as_current_span("arbitrator") as span:
         outputs: List[AgentOutput] = [AgentOutput(**o) for o in agent_outputs]
-        report: PullRequestReport = arbitrate_confidence(outputs)
+        context = ReviewContext(
+            pr_id="dummy",
+            diff_text="",
+            agent_outputs={o.agent: o for o in outputs}
+        )
+        report: PullRequestReport = arbitrate_confidence(context)
         data = report.dict()
         disagreements = getattr(report, "disagreements", [])
         data["disagreements"] = disagreements
@@ -95,10 +103,38 @@ def run_arbitrator(agent_outputs: List[Dict[str, Any]]) -> dict:
         return data
 
 
+@celery_app.task(name="task_queue.celery_app.refine_agent", autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 1})
+def refine_agent(pr_id: str, agent_name: str) -> dict:
+    """Celery task that executes an agent's refinement pass."""
+    from prguard_ai.db.redis_client import get_review_context, store_review_context
+    from prguard_ai.agents import get_agent_by_name
+    from prguard_ai.schemas.agent_output import AgentOutput
+
+    with _TRACER.start_as_current_span(f"refine_{agent_name}") as span:
+        span.set_attribute("pr.id", pr_id)
+        ctx = get_review_context(pr_id)
+        if not ctx:
+            raise ValueError(f"Context missing for PR {pr_id}")
+
+        agent = get_agent_by_name(agent_name)
+        initial = ctx.agent_outputs[agent_name]
+        refined = agent.refine(initial, ctx)
+
+        # Update context in Redis
+        ctx.agent_outputs[agent_name] = refined
+        store_review_context(pr_id, ctx)
+        return refined.dict()
+
+
 __all__ = [
     "celery_app",
     "run_style_agent",
     "run_logic_agent",
     "run_security_agent",
     "run_arbitrator",
+    "refine_agent",
+    "review_pr",
 ]
+
+# Import orchestrator tasks to register them with Celery and avoid circular imports
+from prguard_ai.task_queue.orchestrator import review_pr

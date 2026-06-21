@@ -185,4 +185,63 @@ def analyze_logic(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -
     return AgentOutput(agent="logic", confidence=confidence, issues=all_issues)
 
 
-__all__ = ["analyze_logic"]
+class LogicAgent:
+    @staticmethod
+    def refine(initial_output: AgentOutput, context: ReviewContext) -> AgentOutput:
+        """Refine logic agent issues based on the shared context of other agents."""
+        from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
+        from prguard_ai.schemas.context import ReviewContext
+        from prguard_ai.analysis.diff_parser import extract_changed_files
+
+        refine_prompt_path = Path(__file__).resolve().parent.parent.parent.parent / "prompts" / "logic_refine_prompt.txt"
+        if refine_prompt_path.exists():
+            refine_prompt_base = refine_prompt_path.read_text(encoding="utf-8")
+        else:
+            refine_prompt_base = (
+                "You are a code review assistant focusing on LOGICAL CORRECTNESS refinement. "
+                "Respond with a JSON array of issues."
+            )
+
+        own_findings_str = json.dumps([issue.dict() for issue in initial_output.issues], indent=2)
+
+        other_findings_list = []
+        for name, output in context.agent_outputs.items():
+            if name != "logic":
+                other_findings_list.append(
+                    f"Agent: {name}\nFindings:\n" + json.dumps([issue.dict() for issue in output.issues], indent=2)
+                )
+        other_findings_str = "\n\n".join(other_findings_list)
+
+        prompt = (
+            f"{refine_prompt_base}\n\n"
+            f"--- Git Diff ---\n{context.diff_text}\n\n"
+            f"--- Your Initial Findings ---\n{own_findings_str}\n\n"
+            f"--- Other Agents' Findings ---\n{other_findings_str}\n"
+        )
+
+        pr_id = context.repo_metadata.get("pr_id") if context.repo_metadata else context.pr_id
+        text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
+
+        refined_issues = _parse_llm_issues(text)
+
+        # For files that are checked, attach file path context back if LLM lost it
+        relevant_files = extract_changed_files(context.diff_text)
+        for issue in refined_issues:
+            if not issue.file_path and relevant_files:
+                issue.file_path = relevant_files[0]
+
+        initial_issues_map = {(issue.line, issue.message.lower()): issue for issue in initial_output.issues}
+        final_issues = []
+        for issue in refined_issues:
+            key = (issue.line, issue.message.lower())
+            if key in initial_issues_map:
+                issue.confidence_source = initial_issues_map[key].confidence_source
+            else:
+                issue.confidence_source = "refined"
+            final_issues.append(issue)
+
+        confidence = estimate_issue_confidence(final_issues, empty_confidence=0.45)
+        return AgentOutput(agent="logic", confidence=confidence, issues=final_issues)
+
+
+__all__ = ["analyze_logic", "LogicAgent"]

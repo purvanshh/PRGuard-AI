@@ -10,6 +10,7 @@ from prguard_ai.schemas.agent_output import AgentOutput, Issue
 CONFIDENCE_WEIGHTS: Dict[str, float] = {
     "rule_based": 0.9,
     "llm_reasoning": 0.6,
+    "refined": 0.7,
     "inferred": 0.3,
 }
 SEVERITY_CONFIDENCE_WEIGHTS: Dict[str, float] = {
