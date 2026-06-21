@@ -15,7 +15,7 @@
 
 ---
 
-PRGuard AI hooks into GitHub via webhooks and runs three independent analysis agents — **Style**, **Logic**, and **Security** — in parallel on every pull request. Each agent combines deterministic rule-based checks with LLM reasoning, then a Confidence Arbitrator aggregates findings, detects inter-agent disagreements, assigns traceable confidence scores, and posts a structured review comment back to the PR. The entire pipeline executes asynchronously through Celery + Redis with retry logic, HMAC signature verification, replay protection, rate limiting, and full audit logging.
+PRGuard AI hooks into GitHub via webhooks and runs a multi-agent orchestration pipeline. Three independent analysis agents — **Style**, **Logic**, and **Security** — analyze the pull request in parallel. Instead of working in isolation, their initial findings are shared in a Redis-backed context store. The agents then engage in an iterative dialogue and debate loop moderated by a **Coordinator Agent** (up to 3 rounds), asking clarifying questions and responding to each other to refine their findings. Finally, a Confidence Arbitrator aggregates the refined findings, detects inter-agent disagreements, assigns traceable confidence scores, and posts a structured review comment back to the PR. The entire pipeline executes asynchronously through Celery + Redis with retry logic, HMAC signature verification, replay protection, rate limiting, and full audit logging.
 
 ---
 
@@ -35,12 +35,15 @@ flowchart TD
         CLONE --> IDX["ChromaDB\nIndexing"]
     end
 
-    FW -->|"enqueue Celery tasks"| CQ
+    FW -->|"enqueue review_pr"| CQ
 
     subgraph CQ["Celery + Redis Task Queue"]
         direction TB
-        SA["Style Agent"] & LA["Logic Agent"] & SEC["Security Agent"]
-        SA & LA & SEC --> ARB["Confidence\nArbitrator"]
+        ORCH["Orchestrator Task"] -->|"round 0 parallel run"| INIT["Initial Style, Logic, Security Agents"]
+        INIT -->|"store context"| REDIS[("Redis Context Store")]
+        REDIS -->|"refinement loop (rounds 1-3)"| REF["Refinement & Dialogue Pass"]
+        REF -->|"stopping conditions check"| COORD["Coordinator Agent"]
+        COORD -->|"if converged/done"| ARB["Confidence Arbitrator"]
     end
 
     ARB --> C1["PR Comment"]
@@ -260,21 +263,21 @@ Reference: [`.env.example`](.env.example)
 prguard-ai/
 ├── src/
 │   └── prguard_ai/          # Installable Python package
-│       ├── agents/          # Analysis agents (style, logic, security, arbitrator)
+│       ├── agents/          # Analysis agents (style, logic, security, arbitrator, coordinator)
 │       ├── analysis/        # Diff parsing, AST analysis, repo indexing, code graph, sandboxing
 │       ├── confidence/      # Scoring engine with weighted confidence calibration
 │       ├── config/          # Pydantic-based settings (env-driven)
 │       ├── cost/            # LLM budget manager and token tracking
 │       ├── dashboard/       # Optional web dashboard
-│       ├── db/              # Database layer
+│       ├── db/              # Database layer (SQLite audit logs, Redis context store)
 │       ├── evaluation/      # Evaluation framework with precision/recall metrics
 │       ├── github/          # Webhook server, GitHub API client, App auth
 │       ├── llm/             # LLM client wrapper (NVIDIA NIM / OpenAI-compatible) with token budgeting
 │       ├── observability/   # Structured logging, OpenTelemetry tracing, Prometheus metrics, event streaming
 │       ├── reliability/     # Reliability patterns (circuit breakers, etc.)
-│       ├── schemas/         # Pydantic models (AgentOutput, Issue, PullRequestReport)
+│       ├── schemas/         # Pydantic models (AgentOutput, Issue, PullRequestReport, ReviewContext)
 │       ├── security/        # Rate limiter (per-repo + per-installation)
-│       └── task_queue/      # Celery app, task definitions, task registry, Redis client
+│       └── task_queue/      # Celery app, orchestrator, task definitions, task registry, Redis client
 ├── deploy/                  # Production docker-compose + Prometheus config
 ├── docs/                    # Architecture docs, example reviews, runbook
 ├── fixtures/                # Test fixtures and sample data
