@@ -336,26 +336,35 @@ async def get_review(pr_id: str) -> Dict[str, Any]:
 
 
 @app.get("/health")
-async def health() -> Dict[str, Any]:
+async def health(response: Response) -> Dict[str, Any]:
     """
-    Extended health check endpoint.
+    Comprehensive aggregated health check endpoint.
     """
-    redis_status = check_redis()
-    database_status = await check_database()
-    openai_status = check_openai()
-    queue_depth = check_queue_depth()
+    from prguard_ai.observability.health import get_health_status
+    status_data = await get_health_status()
+    if status_data["status"] == "unhealthy":
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return status_data
 
-    overall = "ok"
-    if redis_status != "connected" or database_status != "connected" or openai_status != "configured":
-        overall = "degraded"
 
-    return {
-        "status": overall,
-        "redis": redis_status,
-        "database": database_status,
-        "openai": openai_status,
-        "queue_depth": queue_depth,
-    }
+@app.get("/health/ready")
+async def health_ready(response: Response) -> Dict[str, Any]:
+    """
+    Kubernetes readiness probe. Returns 200 if healthy/degraded, 503 if unhealthy.
+    """
+    from prguard_ai.observability.health import get_health_status
+    status_data = await get_health_status()
+    if status_data["status"] == "unhealthy":
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return {"status": status_data["status"]}
+
+
+@app.get("/health/live")
+async def health_live() -> Dict[str, Any]:
+    """
+    Kubernetes liveness probe. Returns 200 OK as long as the process is alive.
+    """
+    return {"status": "ok"}
 
 
 @app.websocket("/stream/{pr_id}")
