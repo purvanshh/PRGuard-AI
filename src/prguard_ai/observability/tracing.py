@@ -15,9 +15,12 @@ def _is_truthy(value: str | None) -> bool:
     return str(value).lower() in {"1", "true", "yes", "on"}
 
 
+from prguard_ai.config.settings import settings
+
+
 def configure_tracing(service_name: str) -> None:
     """Configure global tracer provider and OTLP exporter."""
-    if _is_truthy(os.getenv("PRGUARD_OFFLINE_MODE")):
+    if settings.prguard_offline_mode:
         # In offline/dev mode, skip configuring OTLP to avoid noisy failures.
         return
     if isinstance(trace.get_tracer_provider(), TracerProvider):
@@ -29,7 +32,7 @@ def configure_tracing(service_name: str) -> None:
     trace.set_tracer_provider(provider)
 
     # Default OTLP endpoint (can be overridden via OTEL_EXPORTER_OTLP_ENDPOINT).
-    endpoint = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
+    endpoint = settings.otel_exporter_otlp_endpoint
 
     exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
     provider.add_span_processor(BatchSpanProcessor(exporter))

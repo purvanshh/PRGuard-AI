@@ -22,7 +22,7 @@ def _is_truthy(value: str | None) -> bool:
 
 
 def _offline_mode_enabled() -> bool:
-    return _is_truthy(os.getenv("PRGUARD_OFFLINE_MODE", "0"))
+    return settings.prguard_offline_mode
 
 
 def _get_github_client(token: Optional[str] = None) -> Github:
@@ -59,7 +59,7 @@ def get_pr_diff(
     Fetch the unified diff for a pull request.
     """
     if _offline_mode_enabled():
-        fake_path = os.getenv("PRGUARD_FAKE_DIFF_PATH")
+        fake_path = settings.prguard_fake_diff_path
         if not fake_path:
             fake_path = Path(__file__).resolve().parents[3] / "fixtures" / "sample_diff.txt"
         diff_path = Path(fake_path)

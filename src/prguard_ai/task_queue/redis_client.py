@@ -9,11 +9,12 @@ and sane network timeouts. All code should import Redis via:
 from __future__ import annotations
 
 import logging
-import os
 from typing import Optional
 
 import redis
 from redis.sentinel import Sentinel
+
+from prguard_ai.config.settings import settings
 
 try:  # Optional, used for memory fallback.
     import fakeredis
@@ -25,18 +26,14 @@ class RedisClientError(RuntimeError):
     """Wrapper error type for Redis client failures."""
 
 
-_DEFAULT_TIMEOUT = float(os.getenv("REDIS_SOCKET_TIMEOUT", "2.0"))
-_DEFAULT_RETRIES = int(os.getenv("REDIS_CONNECT_RETRIES", "3"))
+_DEFAULT_TIMEOUT = settings.redis_socket_timeout
+_DEFAULT_RETRIES = settings.redis_connect_retries
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _is_truthy(value: str | None) -> bool:
-    return str(value).lower() in {"1", "true", "yes", "on"}
-
-
 def _make_singleton_client() -> redis.Redis:
-    url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    url = settings.redis_url
     return redis.Redis.from_url(
         url,
         socket_timeout=_DEFAULT_TIMEOUT,
@@ -52,8 +49,8 @@ def _make_memory_client() -> redis.Redis:
 
 
 def _make_sentinel_client() -> redis.Redis:
-    hosts_raw = os.getenv("REDIS_SENTINEL_HOSTS", "")
-    service_name = os.getenv("REDIS_SENTINEL_SERVICE_NAME", "mymaster")
+    hosts_raw = settings.redis_sentinel_hosts
+    service_name = settings.redis_sentinel_service_name
     if not hosts_raw:
         raise RedisClientError("REDIS_SENTINEL_HOSTS must be set when REDIS_MODE=sentinel.")
 
@@ -81,7 +78,7 @@ _CLIENT: Optional[redis.Redis] = None
 
 
 def _build_client() -> redis.Redis:
-    mode = os.getenv("REDIS_MODE", "single").lower()
+    mode = settings.redis_mode.lower()
     if mode == "memory":
         return _make_memory_client()
     if mode == "sentinel":
@@ -106,7 +103,7 @@ def get_redis() -> redis.Redis:
         except Exception as exc:  # pragma: no cover - network failures are environment-specific
             last_exc = exc
     # Optional graceful fallback to in-memory Redis for local/dev scenarios.
-    if _is_truthy(os.getenv("REDIS_FALLBACK_TO_MEMORY", "1")):
+    if settings.redis_fallback_to_memory:
         try:
             _CLIENT = _make_memory_client()
             _LOGGER.warning("Redis unreachable; falling back to in-memory fakeredis (non-production mode).")

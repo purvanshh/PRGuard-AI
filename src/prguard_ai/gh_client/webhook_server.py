@@ -390,4 +390,39 @@ async def metrics() -> PlainTextResponse:
     return PlainTextResponse(data.decode("utf-8"), media_type=CONTENT_TYPE_LATEST)
 
 
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from typing import Optional
+
+security_scheme = HTTPBearer(auto_error=False)
+
+
+def _mask_value(key: str, value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    key_lower = key.lower()
+    if any(k in key_lower for k in ["key", "secret", "token", "password"]):
+        return "********"
+    if "url" in key_lower:
+        return re.sub(r"(://[^:]+:)([^@]+)(@)", r"\1********\3", value)
+    return value
+
+
+@app.get("/config")
+async def get_config(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme)
+) -> Dict[str, Any]:
+    """
+    Admin-only endpoint that serializes the current settings, masking sensitive keys.
+    """
+    if not credentials or credentials.credentials != settings.admin_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing admin token",
+        )
+
+    raw_settings = settings.model_dump()
+    masked_settings = {k: _mask_value(k, v) for k, v in raw_settings.items()}
+    return masked_settings
+
+
 __all__ = ["app"]

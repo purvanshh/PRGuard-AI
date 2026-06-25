@@ -17,12 +17,12 @@ from prguard_ai.schemas.pr_report import PullRequestReport
 from prguard_ai.observability.tracing import get_tracer
 
 
-_REDIS_MODE = os.getenv("REDIS_MODE", "single").lower()
-_EAGER_MODE = os.getenv("CELERY_EAGER", "").lower() in {"1", "true", "yes", "on"}
+_REDIS_MODE = settings.redis_mode.lower()
+_EAGER_MODE = settings.celery_eager
 if _REDIS_MODE == "memory":
     _EAGER_MODE = True
 
-CELERY_BROKER_URL = settings.redis_url or os.getenv("REDIS_URL", "redis://redis:6379/0")
+CELERY_BROKER_URL = settings.redis_url
 CELERY_BACKEND_URL = CELERY_BROKER_URL
 if _EAGER_MODE:
     CELERY_BROKER_URL = "memory://"

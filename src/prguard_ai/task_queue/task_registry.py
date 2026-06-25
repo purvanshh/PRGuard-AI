@@ -7,9 +7,12 @@ from typing import Final
 from prguard_ai.task_queue.redis_client import get_redis
 
 
-_PROCESSING_TTL_SECONDS: Final[int] = 15 * 60  # 15 minutes
-_GLOBAL_CONCURRENCY_KEY: Final[str] = "prguard:processing:active"
-_GLOBAL_CONCURRENCY_LIMIT: Final[int] = 5
+from prguard_ai.config.settings import settings
+
+
+_PROCESSING_TTL_SECONDS = settings.processing_ttl_seconds
+_GLOBAL_CONCURRENCY_KEY = "prguard:processing:active"
+_GLOBAL_CONCURRENCY_LIMIT = settings.global_concurrency_limit
 
 
 def register_pr_processing(pr_id: str) -> bool:

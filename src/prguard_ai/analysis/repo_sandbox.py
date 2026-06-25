@@ -96,6 +96,8 @@ def _enforce_limits(repo_path: Path) -> Tuple[int, int]:
                 raise RepoSandboxError(f"Too many Python files (> {MAX_PYTHON_FILES_INDEXED})")
     return total, py_count
 
+from prguard_ai.config.settings import settings
+
 
 def clone_repository(repo_url: str, pr_number: int, repo_full_name: str | None = None) -> RepoSandboxResult:
     """Clone repository into the PRGuard sandbox (shallow clone).
@@ -108,7 +110,7 @@ def clone_repository(repo_url: str, pr_number: int, repo_full_name: str | None =
     Returns:
         RepoSandboxResult describing the sandbox path and computed metrics.
     """
-    offline_mode = _is_truthy(os.getenv("PRGUARD_OFFLINE_MODE"))
+    offline_mode = settings.prguard_offline_mode
     if not repo_url and not offline_mode:
         raise RepoSandboxError("Missing repo_url for cloning.")
     repo_full_name = repo_full_name or "repo"

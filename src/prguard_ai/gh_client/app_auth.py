@@ -9,6 +9,8 @@ from typing import Optional
 import jwt
 import requests
 
+from prguard_ai.config.settings import settings
+
 
 GITHUB_API_URL = "https://api.github.com"
 
@@ -19,7 +21,7 @@ def load_app_private_key() -> str:
 
     Supports either a PEM string in the environment or a filesystem path.
     """
-    raw = os.getenv("GITHUB_APP_PRIVATE_KEY", "").strip()
+    raw = settings.github_app_private_key.strip()
     if not raw:
         raise RuntimeError("GITHUB_APP_PRIVATE_KEY is not configured.")
 
@@ -35,7 +37,7 @@ def generate_jwt(now: Optional[int] = None) -> str:
     """
     Generate a short-lived JWT for GitHub App authentication.
     """
-    app_id = os.getenv("GITHUB_APP_ID")
+    app_id = settings.github_app_id
     if not app_id:
         raise RuntimeError("GITHUB_APP_ID is not configured.")
 
@@ -58,7 +60,7 @@ def get_installation_token(installation_id: Optional[str] = None) -> str:
     """
     Exchange the app JWT for an installation access token.
     """
-    installation_id = installation_id or os.getenv("GITHUB_APP_INSTALLATION_ID")
+    installation_id = installation_id or settings.github_app_installation_id
     if not installation_id:
         raise RuntimeError("GITHUB_APP_INSTALLATION_ID is not configured.")
 

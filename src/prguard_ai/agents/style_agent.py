@@ -13,10 +13,12 @@ from prguard_ai.analysis.repo_indexer import retrieve_similar_code
 from prguard_ai.llm.client import extract_json_from_llm_response, generate_analysis
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
+from prguard_ai.config.settings import settings
+
 logger = logging.getLogger(__name__)
 
 PROMPT_PATH = Path(__file__).resolve().parent.parent.parent.parent / "prompts" / "style_prompt.txt"
-MAX_FILES_PER_PR = 50
+MAX_FILES_PER_PR = settings.max_files_per_pr
 MAX_TOKENS_PER_AGENT = 1500
 FRONTEND_EXTENSIONS = {".css", ".scss", ".sass", ".less", ".html", ".htm", ".jsx", ".tsx", ".vue"}
 CSS_DECLARATION_RE = re.compile(

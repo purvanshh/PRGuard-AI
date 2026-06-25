@@ -13,8 +13,10 @@ import subprocess
 from pathlib import Path
 from typing import Any, Mapping
 
+from prguard_ai.config.settings import settings
 
-DEFAULT_IMAGE = os.getenv("PRGUARD_ANALYSIS_IMAGE", "prguard-ai-analysis:latest")
+
+DEFAULT_IMAGE = settings.prguard_analysis_image
 CONTAINER_REPO_MOUNT = Path("/workspace/repo")
 MAX_RUNTIME_SECONDS = 5 * 60  # 5 minutes
 
