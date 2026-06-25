@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     prguard_offline_mode: bool = Field(False, env="PRGUARD_OFFLINE_MODE")
     llm_circuit_fail_max: int = Field(5, env="LLM_CIRCUIT_FAIL_MAX")
     llm_circuit_reset_timeout: int = Field(60, env="LLM_CIRCUIT_RESET_TIMEOUT")
+    database_url: str = Field("postgresql+asyncpg://postgres:postgres@localhost:5432/prguard", env="DATABASE_URL")
 
     model_config = {"extra": "ignore", "env_file": ".env"}
 

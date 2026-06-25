@@ -11,10 +11,12 @@ services:
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_PERSIST_DIR=/app/.chroma
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/prguard
     ports:
       - "8000:8000"
     depends_on:
       - redis
+      - db
 
   worker:
     build: .
@@ -27,12 +29,29 @@ services:
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_PERSIST_DIR=/app/.chroma
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/prguard
     depends_on:
       - redis
+      - db
 
   redis:
     image: redis:7
     container_name: prguard-redis
     ports:
       - "6379:6379"
+
+  db:
+    image: postgres:15-alpine
+    container_name: prguard-db
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=prguard
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
 

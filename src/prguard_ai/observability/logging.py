@@ -1,51 +1,17 @@
-"""Execution logging utilities for PRGuard AI."""
+"""Execution logging utilities for PRGuard AI using SQLAlchemy."""
 
 from __future__ import annotations
 
 import json
-import sqlite3
-from pathlib import Path
 from typing import Any, Dict, List
 
+from sqlalchemy import select
 
-DB_PATH = Path("prguard_logs.sqlite")
-
-
-def _get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS agent_logs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            pr_id TEXT NOT NULL,
-            agent TEXT NOT NULL,
-            started_at REAL NOT NULL,
-            finished_at REAL NOT NULL,
-            confidence REAL,
-            token_usage INTEGER,
-            execution_duration REAL,
-            agent_order INTEGER,
-            payload TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS llm_usage (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            pr_id TEXT NOT NULL,
-            agent TEXT NOT NULL,
-            model TEXT,
-            prompt_tokens INTEGER NOT NULL,
-            completion_tokens INTEGER NOT NULL,
-            estimated_cost_usd REAL NOT NULL
-        )
-        """
-    )
-    return conn
+from prguard_ai.db.session import async_session
+from prguard_ai.db.models import AgentLog, LLMUsage
 
 
-def log_agent_execution(
+async def log_agent_execution(
     pr_id: str,
     agent: str,
     started_at: float,
@@ -55,44 +21,28 @@ def log_agent_execution(
     execution_duration: float | None = None,
     agent_order: int | None = None,
 ) -> None:
-    conn = _get_conn()
+    """Log the execution of an analysis agent asynchronously in PostgreSQL."""
     duration = execution_duration
     if duration is None:
         duration = max(0.0, float(finished_at - started_at))
-    try:
-        conn.execute(
-            """
-            INSERT INTO agent_logs (
-                pr_id,
-                agent,
-                started_at,
-                finished_at,
-                confidence,
-                token_usage,
-                execution_duration,
-                agent_order,
-                payload
+
+    async with async_session() as session:
+        async with session.begin():
+            log = AgentLog(
+                pr_id=str(pr_id),
+                agent=agent,
+                started_at=started_at,
+                finished_at=finished_at,
+                confidence=float(output.get("confidence", 0.0)),
+                token_usage=int(token_usage or 0),
+                execution_duration=float(duration),
+                agent_order=int(agent_order or 0),
+                payload=json.dumps(output),
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(pr_id),
-                agent,
-                started_at,
-                finished_at,
-                float(output.get("confidence", 0.0)),
-                int(token_usage or 0),
-                float(duration),
-                int(agent_order or 0),
-                json.dumps(output),
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+            session.add(log)
 
 
-def log_llm_usage(
+async def log_llm_usage(
     pr_id: str,
     agent: str,
     model: str,
@@ -100,76 +50,46 @@ def log_llm_usage(
     completion_tokens: int,
     estimated_cost_usd: float,
 ) -> None:
-    conn = _get_conn()
-    try:
-        conn.execute(
-            """
-            INSERT INTO llm_usage (
-                pr_id,
-                agent,
-                model,
-                prompt_tokens,
-                completion_tokens,
-                estimated_cost_usd
+    """Log token usage and cost for an LLM call asynchronously in PostgreSQL."""
+    async with async_session() as session:
+        async with session.begin():
+            usage = LLMUsage(
+                pr_id=str(pr_id),
+                agent=agent,
+                model=model,
+                prompt_tokens=int(prompt_tokens),
+                completion_tokens=int(completion_tokens),
+                estimated_cost_usd=float(estimated_cost_usd),
             )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                str(pr_id),
-                agent,
-                model,
-                int(prompt_tokens),
-                int(completion_tokens),
-                float(estimated_cost_usd),
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+            session.add(usage)
 
 
-def fetch_pr_logs(pr_id: str) -> List[Dict[str, Any]]:
-    conn = _get_conn()
-    try:
-        cur = conn.execute(
-            "SELECT agent, started_at, finished_at, confidence, token_usage, "
-            "execution_duration, agent_order, payload "
-            "FROM agent_logs WHERE pr_id = ? ORDER BY started_at",
-            (str(pr_id),),
-        )
-        rows = cur.fetchall()
-    finally:
-        conn.close()
+async def fetch_pr_logs(pr_id: str) -> List[Dict[str, Any]]:
+    """Retrieve all execution logs for a given PR ID from PostgreSQL."""
+    async with async_session() as session:
+        stmt = select(AgentLog).where(AgentLog.pr_id == str(pr_id)).order_by(AgentLog.started_at)
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
 
     logs: List[Dict[str, Any]] = []
-    for (
-        agent,
-        started_at,
-        finished_at,
-        confidence,
-        token_usage,
-        execution_duration,
-        agent_order,
-        payload,
-    ) in rows:
+    for row in rows:
         try:
-            parsed = json.loads(payload)
+            parsed = json.loads(row.payload)
         except json.JSONDecodeError:
             parsed = {}
         logs.append(
             {
-                "agent": agent,
-                "started_at": started_at,
-                "finished_at": finished_at,
-                "confidence": confidence,
-                "token_usage": token_usage,
-                "execution_duration": execution_duration,
-                "agent_order": agent_order,
+                "agent": row.agent,
+                "started_at": row.started_at,
+                "finished_at": row.finished_at,
+                "confidence": row.confidence,
+                "token_usage": row.token_usage,
+                "execution_duration": row.execution_duration,
+                "agent_order": row.agent_order,
                 "output": parsed,
             }
         )
     return logs
 
 
-__all__ = ["log_agent_execution", "log_llm_usage", "fetch_pr_logs", "DB_PATH"]
-
+__all__ = ["log_agent_execution", "log_llm_usage", "fetch_pr_logs"]

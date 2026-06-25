@@ -245,14 +245,20 @@ def generate_analysis(
 
                 estimated_cost = calculate_openai_cost(model, prompt_tokens, completion_tokens)
                 if pr_id:
-                    log_llm_usage(
-                        pr_id=pr_id,
-                        agent="unknown",
-                        model=model,
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        estimated_cost_usd=estimated_cost,
-                    )
+                    from prguard_ai.db import run_async
+                    try:
+                        run_async(
+                            log_llm_usage(
+                                pr_id=pr_id,
+                                agent="unknown",
+                                model=model,
+                                prompt_tokens=prompt_tokens,
+                                completion_tokens=completion_tokens,
+                                estimated_cost_usd=estimated_cost,
+                            )
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to log LLM usage to PostgreSQL: %s", e)
                 if repo_name:
                     add_usage(repo_name, estimated_cost)
                 LLM_TOKENS_USED.labels(agent="unknown", model=model).inc(total_tokens)

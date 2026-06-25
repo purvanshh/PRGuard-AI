@@ -22,7 +22,7 @@ from prguard_ai.gh_client.github_client import (
     post_pr_comment,
     post_inline_comment,
 )
-from prguard_ai.observability.logging import fetch_pr_logs, log_agent_execution, _get_conn as _get_db_conn  # type: ignore
+from prguard_ai.observability.logging import fetch_pr_logs
 from prguard_ai.observability.event_stream import broker
 from prguard_ai.observability.metrics import (
     TOTAL_PRS_PROCESSED,
@@ -155,14 +155,13 @@ def check_redis() -> str:
         return "disconnected"
 
 
-def check_database() -> str:
+async def check_database() -> str:
     """Return 'connected' if the database is reachable, otherwise 'disconnected'."""
     try:
-        conn = _get_db_conn()
-        try:
-            conn.execute("SELECT 1")
-        finally:
-            conn.close()
+        from prguard_ai.db import engine
+        from sqlalchemy import text
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
         return "connected"
     except Exception:
         return "disconnected"
@@ -330,7 +329,7 @@ async def get_review(pr_id: str) -> Dict[str, Any]:
     """
     Replay endpoint returning agent outputs and analysis trace for a PR.
     """
-    logs = fetch_pr_logs(pr_id)
+    logs = await fetch_pr_logs(pr_id)
     if not logs:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No logs found for PR.")
     return {"pr_id": pr_id, "logs": logs}
@@ -342,7 +341,7 @@ async def health() -> Dict[str, Any]:
     Extended health check endpoint.
     """
     redis_status = check_redis()
-    database_status = check_database()
+    database_status = await check_database()
     openai_status = check_openai()
     queue_depth = check_queue_depth()
 
