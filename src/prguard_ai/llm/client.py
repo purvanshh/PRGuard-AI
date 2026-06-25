@@ -18,8 +18,14 @@ from prguard_ai.observability.metrics import LLM_TOKENS_USED
 from prguard_ai.observability.tracing import get_tracer
 from prguard_ai.cost.budget_manager import add_usage, check_budget
 from prguard_ai.reliability.circuit_breaker import llm_breaker, CircuitBreakerError
+from prguard_ai.task_queue.redis_client import get_redis, RedisClientError
+import redis
 
 logger = logging.getLogger(__name__)
+
+class TokenBudgetExceededError(Exception):
+    """Exception raised when LLM token or cost budget is exceeded."""
+    pass
 
 _JSON_ARRAY_PATTERN = re.compile(r"\[[\s\S]*\]", re.MULTILINE)
 _JSON_OBJECT_PATTERN = re.compile(r"\{[\s\S]*\}", re.MULTILINE)
@@ -29,8 +35,8 @@ MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2
 DEFAULT_MODEL = "openai/gpt-oss-120b"
 
-MAX_TOKENS_PER_REQUEST = 2048
-MAX_TOKENS_PER_PR = 8000
+MAX_TOKENS_PER_REQUEST = settings.max_tokens_per_request
+MAX_TOKENS_PER_PR = settings.max_tokens_per_pr
 
 _PR_TOKEN_USAGE: Dict[str, int] = {}
 _LOCK = threading.Lock()
@@ -122,7 +128,7 @@ def calculate_openai_cost(model: str, prompt_tokens: int, completion_tokens: int
     return float(round(cost, 6))
 
 def _get_client() -> openai.OpenAI:
-    nvidia_key = os.getenv("NVIDIA_API_KEY")
+    nvidia_key = settings.nvidia_api_key
     if nvidia_key:
         return openai.OpenAI(
             base_url="https://integrate.api.nvidia.com/v1",
@@ -139,15 +145,41 @@ def _get_client() -> openai.OpenAI:
 def _check_and_update_budget(pr_id: str | None, requested_tokens: int) -> None:
     if pr_id is None:
         return
-    with _LOCK:
-        used = _PR_TOKEN_USAGE.get(pr_id, 0)
-        if used >= MAX_TOKENS_PER_PR:
-            raise RuntimeError("Token budget for this PR has been exhausted.")
-        allowed = min(requested_tokens, MAX_TOKENS_PER_REQUEST)
-        remaining = MAX_TOKENS_PER_PR - used
-        if allowed > remaining:
-            allowed = remaining
-        _PR_TOKEN_USAGE[pr_id] = used + allowed
+    try:
+        r = get_redis()
+        key = f"pr:{pr_id}:token_usage"
+        with r.pipeline() as pipe:
+            while True:
+                try:
+                    pipe.watch(key)
+                    used_val = pipe.get(key)
+                    used = int(used_val) if used_val is not None else 0
+                    if used >= settings.max_tokens_per_pr:
+                        raise TokenBudgetExceededError("Token budget for this PR has been exhausted.")
+                    allowed = min(requested_tokens, settings.max_tokens_per_request)
+                    remaining = settings.max_tokens_per_pr - used
+                    if allowed > remaining:
+                        allowed = remaining
+                    pipe.multi()
+                    pipe.incrby(key, allowed)
+                    pipe.expire(key, 3600)  # 1 hour TTL
+                    pipe.execute()
+                    break
+                except (redis.WatchError, redis.exceptions.WatchError):
+                    continue
+    except (redis.RedisError, RedisClientError, Exception) as exc:
+        if isinstance(exc, TokenBudgetExceededError):
+            raise
+        logger.warning("Redis is unavailable for token budget tracking; falling back to in-memory: %s", exc)
+        with _LOCK:
+            used = _PR_TOKEN_USAGE.get(pr_id, 0)
+            if used >= settings.max_tokens_per_pr:
+                raise TokenBudgetExceededError("Token budget for this PR has been exhausted.")
+            allowed = min(requested_tokens, settings.max_tokens_per_request)
+            remaining = settings.max_tokens_per_pr - used
+            if allowed > remaining:
+                allowed = remaining
+            _PR_TOKEN_USAGE[pr_id] = used + allowed
 
 
 def generate_analysis(
@@ -164,8 +196,8 @@ def generate_analysis(
     configured (e.g. in local or CI test runs), this returns a deterministic
     stub response instead of calling the external API.
     """
-    offline_mode = _is_truthy(os.getenv("PRGUARD_OFFLINE_MODE"))
-    nvidia_key = os.getenv("NVIDIA_API_KEY") or settings.openai_api_key
+    offline_mode = settings.prguard_offline_mode
+    nvidia_key = settings.nvidia_api_key or settings.openai_api_key
 
     # Offline/test mode: when explicitly disabled or no API key, return a stub response.
     if offline_mode or not nvidia_key or "PYTEST_CURRENT_TEST" in os.environ:
@@ -185,13 +217,13 @@ def generate_analysis(
         # Agents expect JSON; an empty list means "no issues".
         return "[]", meta
 
-    if not os.getenv("NVIDIA_API_KEY") and settings.openai_api_key:
+    if not settings.nvidia_api_key and settings.openai_api_key:
         if model == DEFAULT_MODEL:
             model = "gpt-4o"
 
     _get_client()  # validate key early
 
-    requested = min(max_tokens, MAX_TOKENS_PER_REQUEST)
+    requested = min(max_tokens, settings.max_tokens_per_request)
     _check_and_update_budget(pr_id, requested)
 
     # Repository-level cost budget check (per day).
@@ -199,7 +231,7 @@ def generate_analysis(
     if pr_id and "#" in pr_id:
         repo_name = pr_id.split("#", 1)[0]
     if repo_name and not check_budget(repo_name):
-        raise RuntimeError("LLM cost budget exceeded")
+        raise TokenBudgetExceededError("LLM cost budget exceeded")
 
     last_error: Exception | None = None
     with _TRACER.start_as_current_span("llm_call") as span:
@@ -297,6 +329,7 @@ __all__ = [
     "DEFAULT_MODEL",
     "MAX_TOKENS_PER_REQUEST",
     "MAX_TOKENS_PER_PR",
+    "TokenBudgetExceededError",
 ]
 
 
@@ -312,8 +345,8 @@ def check_llm_health() -> str:
     if now - _last_llm_health_check < 30.0:
         return _last_llm_health_status
 
-    offline_mode = _is_truthy(os.getenv("PRGUARD_OFFLINE_MODE"))
-    nvidia_key = os.getenv("NVIDIA_API_KEY") or settings.openai_api_key
+    offline_mode = settings.prguard_offline_mode
+    nvidia_key = settings.nvidia_api_key or settings.openai_api_key
     if offline_mode:
         _last_llm_health_status = "offline"
         _last_llm_health_check = now
@@ -327,7 +360,7 @@ def check_llm_health() -> str:
         client = _get_client()
         # Use a very small chat completion request as a ping
         client.chat.completions.create(
-            model="gpt-4o" if not os.getenv("NVIDIA_API_KEY") else "openai/gpt-oss-120b",
+            model="gpt-4o" if not settings.nvidia_api_key else "openai/gpt-oss-120b",
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=5,
         )

@@ -137,12 +137,13 @@ def analyze_security(diff_text: str, repo_metadata: Dict[str, Any] | None = None
     llm_skipped = False
     if diff_text:
         from prguard_ai.reliability.circuit_breaker import CircuitBreakerError
+        from prguard_ai.llm.client import TokenBudgetExceededError
         try:
             prompt = _load_prompt() + "\n\n--- Diff ---\n" + diff_text
             text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
             llm_issues = _parse_llm_issues(text)
-        except CircuitBreakerError as exc:
-            logger.warning("Security agent LLM skipped (circuit breaker open) for PR %s: %s", pr_id, exc)
+        except (CircuitBreakerError, TokenBudgetExceededError) as exc:
+            logger.warning("Security agent LLM skipped (circuit breaker open or budget exceeded) for PR %s: %s", pr_id, exc)
             llm_skipped = True
 
     all_issues = issues + llm_issues
@@ -195,6 +196,7 @@ class SecurityAgent:
         pr_id = context.repo_metadata.get("pr_id") if context.repo_metadata else context.pr_id
 
         from prguard_ai.reliability.circuit_breaker import CircuitBreakerError
+        from prguard_ai.llm.client import TokenBudgetExceededError
         try:
             text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
 
@@ -247,10 +249,10 @@ class SecurityAgent:
 
             confidence = estimate_issue_confidence(final_issues, empty_confidence=0.55)
             refined_output = AgentOutput(agent="security", confidence=confidence, issues=final_issues)
-        except CircuitBreakerError as exc:
-            logger.warning("Security agent LLM skipped in refine (circuit breaker open) for PR %s: %s", pr_id, exc)
+        except (CircuitBreakerError, TokenBudgetExceededError) as exc:
+            logger.warning("Security agent LLM skipped in refine (circuit breaker open or budget exceeded) for PR %s: %s", pr_id, exc)
             refined_output = initial_output.model_copy(update={"llm_skipped": True})
-            message = "LLM refinement skipped due to circuit breaker open."
+            message = "LLM refinement skipped due to circuit breaker or budget constraints."
 
         return message, refined_output
 

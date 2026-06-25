@@ -5,10 +5,10 @@ from __future__ import annotations
 import datetime as dt
 from typing import Final
 
+from prguard_ai.config.settings import settings
 from prguard_ai.task_queue.redis_client import RedisClientError, get_redis
 
-
-_DAILY_LIMIT_USD: Final[float] = 5.0
+_DAILY_LIMIT_USD = settings.daily_limit_usd
 
 
 def _bucket_key(repo_name: str, day: dt.date) -> str:

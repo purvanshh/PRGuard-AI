@@ -291,13 +291,14 @@ def analyze_style(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -
     llm_skipped = False
     if diff_text:
         from prguard_ai.reliability.circuit_breaker import CircuitBreakerError
+        from prguard_ai.llm.client import TokenBudgetExceededError
         try:
             prompt = _build_llm_input(diff_text, repo_examples)
             text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
             llm_issues = _parse_llm_issues(text)
             _attach_file_paths_to_llm_issues(llm_issues, relevant_hunks)
-        except CircuitBreakerError as exc:
-            logger.warning("Style agent LLM skipped (circuit breaker open) for PR %s: %s", pr_id, exc)
+        except (CircuitBreakerError, TokenBudgetExceededError) as exc:
+            logger.warning("Style agent LLM skipped (circuit breaker open or budget exceeded) for PR %s: %s", pr_id, exc)
             llm_skipped = True
 
     all_issues = issues + llm_issues
@@ -348,6 +349,7 @@ class StyleAgent:
         pr_id = context.repo_metadata.get("pr_id") if context.repo_metadata else context.pr_id
 
         from prguard_ai.reliability.circuit_breaker import CircuitBreakerError
+        from prguard_ai.llm.client import TokenBudgetExceededError
         try:
             text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
 
@@ -402,10 +404,10 @@ class StyleAgent:
 
             confidence = estimate_issue_confidence(final_issues, empty_confidence=0.5)
             refined_output = AgentOutput(agent="style", confidence=confidence, issues=final_issues)
-        except CircuitBreakerError as exc:
-            logger.warning("Style agent LLM skipped in refine (circuit breaker open) for PR %s: %s", pr_id, exc)
+        except (CircuitBreakerError, TokenBudgetExceededError) as exc:
+            logger.warning("Style agent LLM skipped in refine (circuit breaker open or budget exceeded) for PR %s: %s", pr_id, exc)
             refined_output = initial_output.model_copy(update={"llm_skipped": True})
-            message = "LLM refinement skipped due to circuit breaker open."
+            message = "LLM refinement skipped due to circuit breaker or budget constraints."
 
         return message, refined_output
 
