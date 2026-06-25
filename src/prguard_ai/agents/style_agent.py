@@ -78,19 +78,19 @@ def _parse_llm_issues(raw: str) -> List[Issue]:
         logger.warning("LLM style response is not a JSON array. Raw: %s", raw[:500])
         return []
     for item in data:
+        if len(issues) >= 20:
+            logger.warning("Style agent hit maximum issue limit (20). Skipping remaining issues.")
+            break
         try:
-            issues.append(
-                Issue(
-                    line=int(item.get("line", 1)),
-                    severity=str(item.get("severity", "low")),
-                    message=str(item.get("message", "")),
-                    evidence=str(item.get("evidence", "")),
-                    confidence_source=str(item.get("confidence_source", "llm_reasoning")),
-                    file_path=str(item.get("file_path")) if item.get("file_path") else None,
-                )
-            )
+            issues.append(Issue.validate_and_sanitize(item))
         except Exception as exc:
-            logger.warning("Failed to create Issue from LLM style item: %s", exc)
+            logger.warning(
+                "Parsing failure: failed to validate Issue from item %s. Exception: %s. Raw LLM response (truncated): %s",
+                item,
+                exc,
+                raw[:500],
+                exc_info=True
+            )
             continue
     return issues
 
@@ -370,19 +370,19 @@ class StyleAgent:
 
             refined_issues: List[Issue] = []
             for item in refined_issues_data:
+                if len(refined_issues) >= 20:
+                    logger.warning("Style agent refinement hit maximum issue limit (20). Skipping remaining issues.")
+                    break
                 try:
-                    refined_issues.append(
-                        Issue(
-                            line=int(item.get("line", 1)),
-                            severity=str(item.get("severity", "low")),
-                            message=str(item.get("message", "")),
-                            evidence=str(item.get("evidence", "")),
-                            confidence_source=str(item.get("confidence_source", "llm_reasoning")),
-                            file_path=str(item.get("file_path")) if item.get("file_path") else None,
-                        )
-                    )
+                    refined_issues.append(Issue.validate_and_sanitize(item))
                 except Exception as exc:
-                    logger.warning("Failed to parse refined issue: %s", exc)
+                    logger.warning(
+                        "Parsing failure: failed to validate refined Issue from item %s. Exception: %s. Raw LLM response (truncated): %s",
+                        item,
+                        exc,
+                        text[:500],
+                        exc_info=True
+                    )
                     continue
 
             # For files that are checked, attach file path context back if LLM lost it

@@ -62,18 +62,19 @@ def _parse_llm_issues(raw: str) -> List[Issue]:
         return []
     out: List[Issue] = []
     for item in data:
+        if len(out) >= 20:
+            logger.warning("Security agent hit maximum issue limit (20). Skipping remaining issues.")
+            break
         try:
-            out.append(
-                Issue(
-                    line=int(item.get("line", 1)),
-                    severity=str(item.get("severity", "high")),
-                    message=str(item.get("message", "")),
-                    evidence=str(item.get("evidence", "")),
-                    confidence_source=str(item.get("confidence_source", "llm_reasoning")),
-                )
-            )
+            out.append(Issue.validate_and_sanitize(item))
         except Exception as exc:
-            logger.warning("Failed to create Issue from LLM security item: %s", exc)
+            logger.warning(
+                "Parsing failure: failed to validate Issue from item %s. Exception: %s. Raw LLM response (truncated): %s",
+                item,
+                exc,
+                raw[:500],
+                exc_info=True
+            )
             continue
     return out
 
@@ -216,19 +217,19 @@ class SecurityAgent:
 
             refined_issues: List[Issue] = []
             for item in refined_issues_data:
+                if len(refined_issues) >= 20:
+                    logger.warning("Security agent refinement hit maximum issue limit (20). Skipping remaining issues.")
+                    break
                 try:
-                    refined_issues.append(
-                        Issue(
-                            line=int(item.get("line", 1)),
-                            severity=str(item.get("severity", "low")),
-                            message=str(item.get("message", "")),
-                            evidence=str(item.get("evidence", "")),
-                            confidence_source=str(item.get("confidence_source", "llm_reasoning")),
-                            file_path=str(item.get("file_path")) if item.get("file_path") else None,
-                        )
-                    )
+                    refined_issues.append(Issue.validate_and_sanitize(item))
                 except Exception as exc:
-                    logger.warning("Failed to parse refined issue: %s", exc)
+                    logger.warning(
+                        "Parsing failure: failed to validate refined Issue from item %s. Exception: %s. Raw LLM response (truncated): %s",
+                        item,
+                        exc,
+                        text[:500],
+                        exc_info=True
+                    )
                     continue
 
             # For files that are checked, attach file path context back if LLM lost it
