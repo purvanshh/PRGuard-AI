@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 _TRACER = get_tracer("orchestrator")
 
 
-@celery_app.task(name="task_queue.orchestrator.review_pr")
+@celery_app.task(name="task_queue.orchestrator.review_pr", time_limit=300, soft_time_limit=240)
 def review_pr(pr_id: str, diff_text: str, repo_metadata: Dict[str, Any] | None = None) -> dict:
     """Orchestrator task that coordinates multi-agent analysis and refinement passes."""
     repo_metadata = repo_metadata or {}

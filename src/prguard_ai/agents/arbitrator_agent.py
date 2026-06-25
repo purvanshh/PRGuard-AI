@@ -53,17 +53,34 @@ def aggregate_confidence_with_weights(outputs: Iterable[AgentOutput]) -> float:
     return aggregate_confidence(outputs)
 
 
-def arbitrate_confidence(context: ReviewContext) -> PullRequestReport:
+def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullRequestReport:
     """
     Aggregate agent outputs from context into a single pull request report.
     """
     from prguard_ai.schemas.context import ReviewContext
 
     outputs = list(context.agent_outputs.values())
-    overall_confidence = aggregate_confidence_with_weights(outputs)
+    if partial:
+        successful_outputs = [o for o in outputs if not getattr(o, "error", None)]
+    else:
+        successful_outputs = outputs
+        for o in outputs:
+            if getattr(o, "error", None):
+                raise ValueError(f"Agent {o.agent} failed: {o.error}")
 
-    issues: List[Issue] = [issue for output in outputs for issue in output.issues]
-    disagreements = detect_agent_disagreements(outputs)
+    if not successful_outputs:
+        report = PullRequestReport(
+            overall_confidence=0.0,
+            agent_outputs=outputs,
+            issues=[],
+        )
+        setattr(report, "disagreements", [])
+        return report
+
+    overall_confidence = aggregate_confidence_with_weights(successful_outputs)
+
+    issues: List[Issue] = [issue for output in successful_outputs for issue in output.issues]
+    disagreements = detect_agent_disagreements(successful_outputs)
 
     report = PullRequestReport(
         overall_confidence=overall_confidence,

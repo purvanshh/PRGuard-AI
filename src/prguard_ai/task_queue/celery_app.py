@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Iterable, List
 
+import logging
 from celery import Celery
 
 from prguard_ai.agents.arbitrator_agent import arbitrate_confidence
@@ -15,6 +16,8 @@ from prguard_ai.config.settings import settings
 from prguard_ai.schemas.agent_output import AgentOutput
 from prguard_ai.schemas.pr_report import PullRequestReport
 from prguard_ai.observability.tracing import get_tracer
+
+logger = logging.getLogger(__name__)
 
 
 _REDIS_MODE = settings.redis_mode.lower()
@@ -52,61 +55,157 @@ if _EAGER_MODE:
 _TRACER = get_tracer("celery")
 
 
-@celery_app.task(name="task_queue.celery_app.run_style_agent", autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 1})
+@celery_app.task(
+    name="task_queue.celery_app.run_style_agent",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 1},
+    time_limit=300,
+    soft_time_limit=240,
+)
 def run_style_agent(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -> dict:
     """Celery task that executes the style analysis agent."""
     with _TRACER.start_as_current_span("agent_style") as span:
         meta = repo_metadata or {}
         if meta.get("pr_id"):
             span.set_attribute("pr.id", meta.get("pr_id"))
-        output: AgentOutput = analyze_style(diff_text, repo_metadata=meta)
-        return output.dict()
+        try:
+            output: AgentOutput = analyze_style(diff_text, repo_metadata=meta)
+            return output.dict()
+        except Exception as exc:
+            logger.exception("Style agent task failed")
+            return {
+                "agent": "style",
+                "confidence": 0.0,
+                "issues": [],
+                "llm_skipped": True,
+                "error": str(exc),
+            }
 
 
-@celery_app.task(name="task_queue.celery_app.run_logic_agent", autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 1})
+@celery_app.task(
+    name="task_queue.celery_app.run_logic_agent",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 1},
+    time_limit=300,
+    soft_time_limit=240,
+)
 def run_logic_agent(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -> dict:
     """Celery task that executes the logic analysis agent."""
     with _TRACER.start_as_current_span("agent_logic") as span:
         meta = repo_metadata or {}
         if meta.get("pr_id"):
             span.set_attribute("pr.id", meta.get("pr_id"))
-        output: AgentOutput = analyze_logic(diff_text, repo_metadata=meta)
-        return output.dict()
+        try:
+            output: AgentOutput = analyze_logic(diff_text, repo_metadata=meta)
+            return output.dict()
+        except Exception as exc:
+            logger.exception("Logic agent task failed")
+            return {
+                "agent": "logic",
+                "confidence": 0.0,
+                "issues": [],
+                "llm_skipped": True,
+                "error": str(exc),
+            }
 
 
-@celery_app.task(name="task_queue.celery_app.run_security_agent", autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 1})
+@celery_app.task(
+    name="task_queue.celery_app.run_security_agent",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 1},
+    time_limit=300,
+    soft_time_limit=240,
+)
 def run_security_agent(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -> dict:
     """Celery task that executes the security analysis agent."""
     with _TRACER.start_as_current_span("agent_security") as span:
         meta = repo_metadata or {}
         if meta.get("pr_id"):
             span.set_attribute("pr.id", meta.get("pr_id"))
-        output: AgentOutput = analyze_security(diff_text, repo_metadata=meta)
-        return output.dict()
+        try:
+            output: AgentOutput = analyze_security(diff_text, repo_metadata=meta)
+            return output.dict()
+        except Exception as exc:
+            logger.exception("Security agent task failed")
+            return {
+                "agent": "security",
+                "confidence": 0.0,
+                "issues": [],
+                "llm_skipped": True,
+                "error": str(exc),
+            }
 
 
-@celery_app.task(name="task_queue.celery_app.run_arbitrator")
+@celery_app.task(
+    name="task_queue.celery_app.run_arbitrator",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    max_retries=2,
+    time_limit=300,
+    soft_time_limit=240,
+)
 def run_arbitrator(agent_outputs: List[Dict[str, Any]]) -> dict:
     """Celery task that runs the confidence arbitrator."""
     from prguard_ai.schemas.context import ReviewContext
     with _TRACER.start_as_current_span("arbitrator") as span:
-        outputs: List[AgentOutput] = [AgentOutput(**o) for o in agent_outputs]
-        context = ReviewContext(
-            pr_id="dummy",
-            diff_text="",
-            agent_outputs={o.agent: o for o in outputs}
-        )
-        report: PullRequestReport = arbitrate_confidence(context)
-        data = report.dict()
-        disagreements = getattr(report, "disagreements", [])
-        data["disagreements"] = disagreements
-        if data.get("pr_id"):
-            span.set_attribute("pr.id", data.get("pr_id"))
-        span.set_attribute("review.overall_confidence", float(data.get("overall_confidence", 0.0)))
-        return data
+        try:
+            outputs: List[AgentOutput] = []
+            for o in agent_outputs:
+                try:
+                    outputs.append(AgentOutput(**o))
+                except Exception:
+                    # If parsing agent output fails, skip or handle as error
+                    pass
+            context = ReviewContext(
+                pr_id="dummy",
+                diff_text="",
+                agent_outputs={o.agent: o for o in outputs}
+            )
+            report = arbitrate_confidence(context, partial=True)
+            data = report.dict()
+            disagreements = getattr(report, "disagreements", [])
+            data["disagreements"] = disagreements
+            
+            # If any of the agent outputs had an error, mark report as degraded
+            if any(o.error for o in outputs):
+                data["degraded"] = True
+                
+            if data.get("pr_id"):
+                span.set_attribute("pr.id", data.get("pr_id"))
+            span.set_attribute("review.overall_confidence", float(data.get("overall_confidence", 0.0)))
+            return data
+        except Exception as exc:
+            logger.error("Arbitrator failed: %s. Returning degraded report.", exc)
+            outputs_list = []
+            issues = []
+            for o in agent_outputs:
+                try:
+                    out = AgentOutput(**o)
+                    outputs_list.append(out.dict())
+                    issues.extend(out.issues)
+                except Exception:
+                    pass
+            return {
+                "overall_confidence": 0.0,
+                "agent_outputs": outputs_list,
+                "issues": issues,
+                "disagreements": [],
+                "degraded": True,
+                "error": str(exc),
+            }
 
 
-@celery_app.task(name="task_queue.celery_app.refine_agent", autoretry_for=(Exception,), retry_backoff=True, retry_kwargs={"max_retries": 1})
+@celery_app.task(
+    name="task_queue.celery_app.refine_agent",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 1},
+    time_limit=300,
+    soft_time_limit=240,
+)
 def refine_agent(pr_id: str, agent_name: str) -> dict:
     """Celery task that executes an agent's refinement pass."""
     from prguard_ai.db.redis_client import get_review_context, store_review_context

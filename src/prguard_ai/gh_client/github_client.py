@@ -82,11 +82,13 @@ def format_pr_review(report: dict) -> str:
     """
     Format a PR review comment in Markdown from a PullRequestReport-like dict.
     """
+    degraded = report.get("degraded", False)
     lines: List[str] = []
     lines.append("## PRGuard AI Review")
     lines.append("")
-    lines.append(f"**Confidence Score:** {report.get('overall_confidence', 0.0):.2f}")
-    lines.append("")
+    if not degraded:
+        lines.append(f"**Confidence Score:** {report.get('overall_confidence', 0.0):.2f}")
+        lines.append("")
 
     agent_sections: Dict[str, List[dict]] = {"style": [], "logic": [], "security": []}
     for output in report.get("agent_outputs", []):
@@ -110,13 +112,14 @@ def format_pr_review(report: dict) -> str:
     _render_section("Logic", agent_sections["logic"])
     _render_section("Security", agent_sections["security"])
 
-    disagreements = report.get("disagreements") or []
-    lines.append("### Disagreement Summary")
-    if disagreements:
-        for d in disagreements:
-            lines.append(f"- {d}")
-    else:
-        lines.append("_No major disagreements detected between agents._")
+    if not degraded:
+        disagreements = report.get("disagreements") or []
+        lines.append("### Disagreement Summary")
+        if disagreements:
+            for d in disagreements:
+                lines.append(f"- {d}")
+        else:
+            lines.append("_No major disagreements detected between agents._")
 
     return "\n".join(lines)
 
