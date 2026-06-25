@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     redis_url: str = Field("redis://redis:6379/0", env="REDIS_URL")
     chroma_persist_dir: str = Field(".chroma", env="CHROMA_PERSIST_DIR")
     prguard_offline_mode: bool = Field(False, env="PRGUARD_OFFLINE_MODE")
+    llm_circuit_fail_max: int = Field(5, env="LLM_CIRCUIT_FAIL_MAX")
+    llm_circuit_reset_timeout: int = Field(60, env="LLM_CIRCUIT_RESET_TIMEOUT")
 
     model_config = {"extra": "ignore", "env_file": ".env"}
 

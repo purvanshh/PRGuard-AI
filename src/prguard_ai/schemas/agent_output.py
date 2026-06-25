@@ -34,6 +34,7 @@ class AgentOutput(BaseModel):
     agent: str = Field(..., description="Agent name, e.g. style, logic, security.")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Overall agent confidence.")
     issues: List[Issue] = Field(default_factory=list, description="List of detected issues.")
+    llm_skipped: bool = Field(default=False, description="Flag indicating if LLM processing was skipped.")
 
 
 __all__ = ["Issue", "AgentOutput"]

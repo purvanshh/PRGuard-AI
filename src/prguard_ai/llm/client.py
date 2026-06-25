@@ -17,6 +17,7 @@ from prguard_ai.observability.logging import log_llm_usage
 from prguard_ai.observability.metrics import LLM_TOKENS_USED
 from prguard_ai.observability.tracing import get_tracer
 from prguard_ai.cost.budget_manager import add_usage, check_budget
+from prguard_ai.reliability.circuit_breaker import llm_breaker, CircuitBreakerError
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +210,8 @@ def generate_analysis(
             span.set_attribute("llm.attempt", attempt)
             try:
                 client = _get_client()
-                response = client.chat.completions.create(
+                response = llm_breaker.call(
+                    client.chat.completions.create,
                     model=model,
                     messages=[
                         {"role": "system", "content": "Reasoning: low"},
@@ -255,6 +257,8 @@ def generate_analysis(
                     add_usage(repo_name, estimated_cost)
                 LLM_TOKENS_USED.labels(agent="unknown", model=model).inc(total_tokens)
                 return message, meta
+            except CircuitBreakerError:
+                raise
             except openai.RateLimitError as exc:
                 last_error = exc
                 span.record_exception(exc)
@@ -283,8 +287,49 @@ __all__ = [
     "extract_json_from_llm_response",
     "extract_json_obj_from_llm_response",
     "generate_analysis",
+    "check_llm_health",
     "DEFAULT_MODEL",
     "MAX_TOKENS_PER_REQUEST",
     "MAX_TOKENS_PER_PR",
 ]
+
+
+_last_llm_health_check = 0.0
+_last_llm_health_status = "unknown"
+
+def check_llm_health() -> str:
+    """
+    Probe the LLM endpoint to verify API availability, caching the status for 30 seconds.
+    """
+    global _last_llm_health_check, _last_llm_health_status
+    now = time.time()
+    if now - _last_llm_health_check < 30.0:
+        return _last_llm_health_status
+
+    offline_mode = _is_truthy(os.getenv("PRGUARD_OFFLINE_MODE"))
+    nvidia_key = os.getenv("NVIDIA_API_KEY") or settings.openai_api_key
+    if offline_mode:
+        _last_llm_health_status = "offline"
+        _last_llm_health_check = now
+        return _last_llm_health_status
+    if not nvidia_key:
+        _last_llm_health_status = "missing_api_key"
+        _last_llm_health_check = now
+        return _last_llm_health_status
+
+    try:
+        client = _get_client()
+        # Use a very small chat completion request as a ping
+        client.chat.completions.create(
+            model="gpt-4o" if not os.getenv("NVIDIA_API_KEY") else "openai/gpt-oss-120b",
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=5,
+        )
+        _last_llm_health_status = "connected"
+    except Exception as exc:
+        logger.warning("LLM health check probe failed: %s", exc)
+        _last_llm_health_status = f"error: {str(exc)}"
+
+    _last_llm_health_check = now
+    return _last_llm_health_status
 

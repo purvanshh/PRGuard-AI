@@ -286,15 +286,21 @@ def analyze_style(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -
 
     # LLM-based style reasoning with token budgeting.
     llm_issues: List[Issue] = []
+    llm_skipped = False
     if diff_text:
-        prompt = _build_llm_input(diff_text, repo_examples)
-        text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
-        llm_issues = _parse_llm_issues(text)
-        _attach_file_paths_to_llm_issues(llm_issues, relevant_hunks)
+        from prguard_ai.reliability.circuit_breaker import CircuitBreakerError
+        try:
+            prompt = _build_llm_input(diff_text, repo_examples)
+            text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
+            llm_issues = _parse_llm_issues(text)
+            _attach_file_paths_to_llm_issues(llm_issues, relevant_hunks)
+        except CircuitBreakerError as exc:
+            logger.warning("Style agent LLM skipped (circuit breaker open) for PR %s: %s", pr_id, exc)
+            llm_skipped = True
 
     all_issues = issues + llm_issues
     confidence = 0.9 if all_issues else 0.5
-    return AgentOutput(agent="style", confidence=confidence, issues=all_issues)
+    return AgentOutput(agent="style", confidence=confidence, issues=all_issues, llm_skipped=llm_skipped)
 
 
 class StyleAgent:
@@ -338,59 +344,68 @@ class StyleAgent:
         )
 
         pr_id = context.repo_metadata.get("pr_id") if context.repo_metadata else context.pr_id
-        text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
 
-        # Parse refined response
-        from prguard_ai.llm.client import extract_json_obj_from_llm_response
-        clean = extract_json_obj_from_llm_response(text)
-        message = ""
-        refined_issues_data = []
+        from prguard_ai.reliability.circuit_breaker import CircuitBreakerError
         try:
-            data = json.loads(clean)
-            if isinstance(data, dict):
-                message = str(data.get("message") or "")
-                refined_issues_data = data.get("issues") or []
-            elif isinstance(data, list):
-                refined_issues_data = data
-        except Exception:
-            logger.warning("Failed to parse refinement response as JSON. Raw: %s", text[:500])
+            text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
 
-        refined_issues: List[Issue] = []
-        for item in refined_issues_data:
+            # Parse refined response
+            from prguard_ai.llm.client import extract_json_obj_from_llm_response
+            clean = extract_json_obj_from_llm_response(text)
+            message = ""
+            refined_issues_data = []
             try:
-                refined_issues.append(
-                    Issue(
-                        line=int(item.get("line", 1)),
-                        severity=str(item.get("severity", "low")),
-                        message=str(item.get("message", "")),
-                        evidence=str(item.get("evidence", "")),
-                        confidence_source=str(item.get("confidence_source", "llm_reasoning")),
-                        file_path=str(item.get("file_path")) if item.get("file_path") else None,
+                data = json.loads(clean)
+                if isinstance(data, dict):
+                    message = str(data.get("message") or "")
+                    refined_issues_data = data.get("issues") or []
+                elif isinstance(data, list):
+                    refined_issues_data = data
+            except Exception:
+                logger.warning("Failed to parse refinement response as JSON. Raw: %s", text[:500])
+
+            refined_issues: List[Issue] = []
+            for item in refined_issues_data:
+                try:
+                    refined_issues.append(
+                        Issue(
+                            line=int(item.get("line", 1)),
+                            severity=str(item.get("severity", "low")),
+                            message=str(item.get("message", "")),
+                            evidence=str(item.get("evidence", "")),
+                            confidence_source=str(item.get("confidence_source", "llm_reasoning")),
+                            file_path=str(item.get("file_path")) if item.get("file_path") else None,
+                        )
                     )
-                )
-            except Exception as exc:
-                logger.warning("Failed to parse refined issue: %s", exc)
-                continue
+                except Exception as exc:
+                    logger.warning("Failed to parse refined issue: %s", exc)
+                    continue
 
-        # For files that are checked, attach file path context back if LLM lost it
-        relevant_files = extract_changed_files(context.diff_text)
-        for issue in refined_issues:
-            if not issue.file_path and relevant_files:
-                # Default to the first changed file if ambiguous
-                issue.file_path = relevant_files[0]
+            # For files that are checked, attach file path context back if LLM lost it
+            relevant_files = extract_changed_files(context.diff_text)
+            for issue in refined_issues:
+                if not issue.file_path and relevant_files:
+                    # Default to the first changed file if ambiguous
+                    issue.file_path = relevant_files[0]
 
-        initial_issues_map = {(issue.line, issue.message.lower()): issue for issue in initial_output.issues}
-        final_issues = []
-        for issue in refined_issues:
-            key = (issue.line, issue.message.lower())
-            if key in initial_issues_map:
-                issue.confidence_source = initial_issues_map[key].confidence_source
-            else:
-                issue.confidence_source = "refined"
-            final_issues.append(issue)
+            initial_issues_map = {(issue.line, issue.message.lower()): issue for issue in initial_output.issues}
+            final_issues = []
+            for issue in refined_issues:
+                key = (issue.line, issue.message.lower())
+                if key in initial_issues_map:
+                    issue.confidence_source = initial_issues_map[key].confidence_source
+                else:
+                    issue.confidence_source = "refined"
+                final_issues.append(issue)
 
-        confidence = estimate_issue_confidence(final_issues, empty_confidence=0.5)
-        return message, AgentOutput(agent="style", confidence=confidence, issues=final_issues)
+            confidence = estimate_issue_confidence(final_issues, empty_confidence=0.5)
+            refined_output = AgentOutput(agent="style", confidence=confidence, issues=final_issues)
+        except CircuitBreakerError as exc:
+            logger.warning("Style agent LLM skipped in refine (circuit breaker open) for PR %s: %s", pr_id, exc)
+            refined_output = initial_output.model_copy(update={"llm_skipped": True})
+            message = "LLM refinement skipped due to circuit breaker open."
+
+        return message, refined_output
 
 
 __all__ = ["analyze_style", "StyleAgent"]
