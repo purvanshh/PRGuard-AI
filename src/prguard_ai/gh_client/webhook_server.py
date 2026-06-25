@@ -10,7 +10,7 @@ import re
 import time
 from typing import Any, Dict, List
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
 
 from prguard_ai.config.settings import settings
 from prguard_ai.analysis.repo_indexer import initialize_repo_index
@@ -189,6 +189,7 @@ def check_queue_depth() -> Dict[str, int]:
 @app.post("/webhook")
 async def github_webhook(
     request: Request,
+    response: Response,
     x_github_event: str = Header(..., alias="X-GitHub-Event"),
     x_hub_signature_256: str | None = Header(None, alias="X-Hub-Signature-256"),
     x_github_delivery: str = Header(..., alias="X-GitHub-Delivery"),
@@ -277,81 +278,51 @@ async def github_webhook(
     if is_pr_processing(pr_id):
         return {"status": "ignored", "reason": "already_processing"}
 
-    # Global concurrency control.
-    if not acquire_global_slot():
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="backpressure",
-        )
-
     with _TRACER.start_as_current_span("webhook_received") as span:
         span.set_attribute("pr.id", pr_id)
         span.set_attribute("repo.full_name", repo)
         span.set_attribute("pr.number", int(pr_number))
         span.set_attribute("pr.action", action or "")
 
-        diff_text = get_pr_diff(repo_full_name=repo, pr_number=pr_number)
+        # Attempt to register this PR as in-flight (idempotency).
+        registered = register_pr_processing(pr_id)
+        if not registered:
+            return {"status": "ignored", "reason": "already_processing"}
 
-        sandbox_path: str | None = None
-        # Track whether we successfully registered this PR for processing.
-        registered = False
-        try:
-            # Attempt to register this PR as in-flight.
-            registered = register_pr_processing(pr_id)
-            if not registered:
-                return {"status": "ignored", "reason": "already_processing"}
-            try:
-                repo_url = _validate_repo_url_from_payload(payload)
-                sandbox = clone_repository(repo_url=repo_url, pr_number=pr_number, repo_full_name=str(repo))
-                sandbox_path = str(sandbox.temp_path)
-                span.add_event("repo_cloned", {"python_files": sandbox.python_files_indexed, "repo_size_bytes": sandbox.repo_size_bytes})
+        repo_metadata: Dict[str, Any] = {
+            "repository": repo,
+            "pr_number": pr_number,
+            "action": action,
+            "pr_id": pr_id,
+        }
 
-                # Initialize repository index for style retrieval using sandbox.
-                initialize_repo_index(repo_path=sandbox_path)
-                # Warm dependency graph cache (best-effort).
-                try:
-                    build_code_graph(sandbox_path)
-                except Exception:
-                    logger.warning("Failed to build code graph for repository %s", repo)
-            except RepoSandboxError as exc:
-                span.record_exception(exc)
-                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        # Broadcast starting event
+        await broker.broadcast(
+            pr_id,
+            {"type": "agent_started", "agent": "orchestrator", "pr_id": pr_id},
+        )
 
-            repo_metadata: Dict[str, Any] = {
-                "repository": repo,
-                "pr_number": pr_number,
-                "action": action,
-                "pr_id": pr_id,
-            }
+        from celery import chain, group
+        from prguard_ai.task_queue.tasks import prepare_repository, post_review, on_task_failure
 
-            # Enqueue the orchestrator Celery task
-            await broker.broadcast(
-                pr_id,
-                {"type": "agent_started", "agent": "orchestrator", "pr_id": pr_id},
-            )
-            orch_result = review_pr.delay(pr_id, diff_text, repo_metadata)
-            arb_output = orch_result.get(timeout=600)
+        workflow = chain(
+            prepare_repository.s(pr_id, repo, pr_number, payload),
+            group(
+                run_style_agent.s(repo_metadata),
+                run_logic_agent.s(repo_metadata),
+                run_security_agent.s(repo_metadata),
+            ),
+            run_arbitrator.s(),
+            post_review.s(repo, pr_number),
+        )
 
-            # Log events/metrics
-            TOTAL_PRS_PROCESSED.inc()
-            REVIEW_CONFIDENCE.observe(float(arb_output.get("overall_confidence", 0.0)))
-            await broker.broadcast(
-                pr_id,
-                {
-                    "type": "confidence_updated",
-                    "pr_id": pr_id,
-                    "overall_confidence": arb_output.get("overall_confidence", 0.0),
-                },
-            )
-            span.add_event("orchestrator_complete", {"overall_confidence": float(arb_output.get("overall_confidence", 0.0))})
+        # Fire and forget the Celery chain
+        workflow.apply_async(link_error=on_task_failure.s(pr_id=pr_id))
 
-            return {"status": "ok", "overall_confidence": arb_output.get("overall_confidence", 0.0)}
-        finally:
-            if sandbox_path:
-                cleanup_repository(sandbox_path)
-            if registered:
-                complete_pr_processing(pr_id)
-            release_global_slot()
+        span.add_event("workflow_enqueued", {"pr_id": pr_id})
+
+        response.status_code = status.HTTP_202_ACCEPTED
+        return {"status": "accepted", "pr_id": pr_id}
 
 
 @app.get("/review/{pr_id}")

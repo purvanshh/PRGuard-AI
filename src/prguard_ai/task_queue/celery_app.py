@@ -36,6 +36,9 @@ celery_app.conf.task_routes = {
     "task_queue.celery_app.run_arbitrator": {"queue": "arbitrator"},
     "task_queue.celery_app.refine_agent": {"queue": "refinement"},
     "task_queue.orchestrator.review_pr": {"queue": "orchestrator"},
+    "task_queue.tasks.prepare_repository": {"queue": "orchestrator"},
+    "task_queue.tasks.post_review": {"queue": "orchestrator"},
+    "task_queue.tasks.on_task_failure": {"queue": "orchestrator"},
 }
 celery_app.conf.task_time_limit = 300
 celery_app.conf.task_soft_time_limit = 240
@@ -141,3 +144,4 @@ __all__ = [
 
 # Import orchestrator tasks to register them with Celery and avoid circular imports
 from prguard_ai.task_queue.orchestrator import review_pr
+import prguard_ai.task_queue.tasks
