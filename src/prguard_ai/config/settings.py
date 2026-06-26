@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     # Hardcoded constants centralized
     max_files_per_pr: int = Field(50, validation_alias="MAX_FILES_PER_PR")
     global_concurrency_limit: int = Field(5, validation_alias="GLOBAL_CONCURRENCY_LIMIT")
+    repo_cache_dir: str = Field(".repo_cache", validation_alias="REPO_CACHE_DIR")
+    repo_cache_max_size_gb: float = Field(10.0, validation_alias="REPO_CACHE_MAX_SIZE_GB")
     processing_ttl_seconds: int = Field(900, validation_alias="PROCESSING_TTL_SECONDS")
     daily_limit_usd: float = Field(5.0, validation_alias="DAILY_LIMIT_USD")
     max_tokens_per_request: int = Field(2048, validation_alias="MAX_TOKENS_PER_REQUEST")

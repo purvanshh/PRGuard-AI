@@ -12,6 +12,7 @@ def client():
 
 
 @pytest.mark.anyio
+@patch("prguard_ai.analysis.repo_cache.get_cache_stats")
 @patch("prguard_ai.observability.health.check_redis")
 @patch("prguard_ai.observability.health.check_postgres")
 @patch("prguard_ai.observability.health.check_llm")
@@ -20,7 +21,7 @@ def client():
 @patch("prguard_ai.observability.health.check_chromadb")
 @patch("prguard_ai.observability.health.check_disk_space")
 async def test_get_health_status_ok(
-    mock_disk, mock_chroma, mock_celery, mock_github, mock_llm, mock_postgres, mock_redis
+    mock_disk, mock_chroma, mock_celery, mock_github, mock_llm, mock_postgres, mock_redis, mock_cache_stats
 ):
     mock_redis.return_value = "connected"
     mock_postgres.return_value = "connected"
@@ -29,6 +30,7 @@ async def test_get_health_status_ok(
     mock_celery.return_value = "active"
     mock_chroma.return_value = "healthy"
     mock_disk.return_value = "healthy"
+    mock_cache_stats.return_value = {"path": ".repo_cache", "size_bytes": 100, "repos_count": 1}
 
     from prguard_ai.observability.health import get_health_status
 
@@ -38,9 +40,11 @@ async def test_get_health_status_ok(
     assert status_data["critical"]["database"] == "connected"
     assert status_data["critical"]["llm"] == "connected"
     assert status_data["non_critical"]["celery"] == "active"
+    assert status_data["cache_stats"] == {"path": ".repo_cache", "size_bytes": 100, "repos_count": 1}
 
 
 @pytest.mark.anyio
+@patch("prguard_ai.analysis.repo_cache.get_cache_stats")
 @patch("prguard_ai.observability.health.check_redis")
 @patch("prguard_ai.observability.health.check_postgres")
 @patch("prguard_ai.observability.health.check_llm")
@@ -49,7 +53,7 @@ async def test_get_health_status_ok(
 @patch("prguard_ai.observability.health.check_chromadb")
 @patch("prguard_ai.observability.health.check_disk_space")
 async def test_get_health_status_unhealthy_critical(
-    mock_disk, mock_chroma, mock_celery, mock_github, mock_llm, mock_postgres, mock_redis
+    mock_disk, mock_chroma, mock_celery, mock_github, mock_llm, mock_postgres, mock_redis, mock_cache_stats
 ):
     mock_redis.return_value = "disconnected"  # Critical component down
     mock_postgres.return_value = "connected"
@@ -58,6 +62,7 @@ async def test_get_health_status_unhealthy_critical(
     mock_celery.return_value = "active"
     mock_chroma.return_value = "healthy"
     mock_disk.return_value = "healthy"
+    mock_cache_stats.return_value = {"path": ".repo_cache", "size_bytes": 0, "repos_count": 0}
 
     from prguard_ai.observability.health import get_health_status
 
@@ -66,6 +71,7 @@ async def test_get_health_status_unhealthy_critical(
 
 
 @pytest.mark.anyio
+@patch("prguard_ai.analysis.repo_cache.get_cache_stats")
 @patch("prguard_ai.observability.health.check_redis")
 @patch("prguard_ai.observability.health.check_postgres")
 @patch("prguard_ai.observability.health.check_llm")
@@ -74,7 +80,7 @@ async def test_get_health_status_unhealthy_critical(
 @patch("prguard_ai.observability.health.check_chromadb")
 @patch("prguard_ai.observability.health.check_disk_space")
 async def test_get_health_status_degraded_non_critical(
-    mock_disk, mock_chroma, mock_celery, mock_github, mock_llm, mock_postgres, mock_redis
+    mock_disk, mock_chroma, mock_celery, mock_github, mock_llm, mock_postgres, mock_redis, mock_cache_stats
 ):
     mock_redis.return_value = "connected"
     mock_postgres.return_value = "connected"
@@ -83,6 +89,7 @@ async def test_get_health_status_degraded_non_critical(
     mock_celery.return_value = "no_active_workers"  # Non-critical issue
     mock_chroma.return_value = "healthy"
     mock_disk.return_value = "healthy"
+    mock_cache_stats.return_value = {"path": ".repo_cache", "size_bytes": 0, "repos_count": 0}
 
     from prguard_ai.observability.health import get_health_status
 

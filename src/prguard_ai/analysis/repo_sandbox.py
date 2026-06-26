@@ -10,6 +10,7 @@ It does not implement any agent logic.
 from __future__ import annotations
 
 import ipaddress
+import logging
 import os
 import shutil
 import subprocess
@@ -18,6 +19,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Tuple
 from urllib.parse import urlparse
+
+from prguard_ai.analysis.repo_cache import get_cached_repo
+
+logger = logging.getLogger(__name__)
 
 
 SANDBOX_ROOT = Path("/tmp/prguard")
@@ -100,7 +105,7 @@ from prguard_ai.config.settings import settings
 
 
 def clone_repository(repo_url: str, pr_number: int, repo_full_name: str | None = None) -> RepoSandboxResult:
-    """Clone repository into the PRGuard sandbox (shallow clone).
+    """Get repository clone into the PRGuard sandbox using caching and link-copying.
 
     Args:
         repo_url: HTTPS clone URL (recommended).
@@ -130,19 +135,30 @@ def clone_repository(repo_url: str, pr_number: int, repo_full_name: str | None =
 
     _validate_repo_url(repo_url)
 
-    env = os.environ.copy()
-    env.setdefault("GIT_TERMINAL_PROMPT", "0")
-
+    # Retrieve from cache
     try:
-        subprocess.run(
-            ["git", "clone", "--depth", "1", repo_url, str(temp_path)],
-            check=True,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            env=env,
-        )
-    except subprocess.CalledProcessError as exc:
-        raise RepoSandboxError("Failed to clone repository (shallow).") from exc
+        cache_dir = get_cached_repo(repo_full_name, repo_url)
+    except Exception as exc:
+        raise RepoSandboxError(f"Failed to retrieve repository from cache: {exc}") from exc
+
+    # Copy files using hard links recursively to save disk space and clone instantly
+    temp_path.mkdir(parents=True, exist_ok=True)
+    try:
+        if os.name != "nt":
+            subprocess.run(
+                ["cp", "-al", f"{cache_dir}/.", str(temp_path)],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        else:
+            shutil.copytree(cache_dir, temp_path, copy_function=os.link, dirs_exist_ok=True)
+    except Exception as exc:
+        logger.warning("Failed to link cached repo, copying normally: %s", exc)
+        try:
+            shutil.copytree(cache_dir, temp_path, dirs_exist_ok=True)
+        except Exception as copy_exc:
+            raise RepoSandboxError(f"Failed to copy repository to sandbox: {copy_exc}") from copy_exc
 
     repo_size, py_count = _enforce_limits(temp_path)
     return RepoSandboxResult(temp_path=temp_path, python_files_indexed=py_count, repo_size_bytes=repo_size)

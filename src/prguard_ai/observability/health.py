@@ -113,6 +113,8 @@ def check_logging() -> str:
 
 async def get_health_status() -> Dict[str, Any]:
     """Aggregate health checks for all dependencies."""
+    from prguard_ai.analysis.repo_cache import get_cache_stats
+
     redis_status = check_redis()
     db_status = await check_postgres()
     llm_status = check_llm()
@@ -121,6 +123,7 @@ async def get_health_status() -> Dict[str, Any]:
     chroma_status = check_chromadb()
     disk_status = check_disk_space()
     logging_status = check_logging()
+    cache_stats = get_cache_stats()
 
     # Determine critical statuses
     critical_healthy = (
@@ -154,4 +157,5 @@ async def get_health_status() -> Dict[str, Any]:
             "disk": disk_status,
             "logging": logging_status,
         },
+        "cache_stats": cache_stats,
     }
