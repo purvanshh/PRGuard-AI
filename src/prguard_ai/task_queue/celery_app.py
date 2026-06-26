@@ -244,3 +244,12 @@ __all__ = [
 # Import orchestrator tasks to register them with Celery and avoid circular imports
 from prguard_ai.task_queue.orchestrator import review_pr
 import prguard_ai.task_queue.tasks
+
+from celery.signals import after_setup_logger
+
+@after_setup_logger.connect
+def setup_celery_logger(logger, *args, **kwargs):
+    from prguard_ai.observability.structured_logging import JsonLogFormatter
+    for handler in logger.handlers:
+        handler.setFormatter(JsonLogFormatter())
+

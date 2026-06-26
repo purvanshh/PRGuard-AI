@@ -13,15 +13,36 @@ class JsonLogFormatter(logging.Formatter):
     """Format log records as structured JSON."""
 
     def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
+        import traceback
+        from opentelemetry import trace
+
+        # Dynamically fetch OpenTelemetry trace context
+        trace_id = None
+        span_id = None
+        try:
+            span = trace.get_current_span()
+            if span and span.get_span_context() and span.get_span_context().is_valid:
+                trace_id = trace.format_trace_id(span.get_span_context().trace_id)
+                span_id = trace.format_span_id(span.get_span_context().span_id)
+        except Exception:
+            pass
+
         payload: Dict[str, Any] = {
             "timestamp": datetime.fromtimestamp(record.created, tz=timezone.utc).isoformat(),
             "level": record.levelname,
             "service": "prguard",
             "pr_id": getattr(record, "pr_id", None),
             "agent": getattr(record, "agent", record.name),
+            "agent_name": getattr(record, "agent_name", None),
+            "event_type": getattr(record, "event_type", None),
             "message": record.getMessage(),
+            "trace_id": trace_id,
+            "span_id": span_id,
             "extra": {},
         }
+
+        if record.exc_info:
+            payload["stack_trace"] = "".join(traceback.format_exception(*record.exc_info))
 
         # Attach any extra attributes that are not part of the standard LogRecord.
         standard_attrs = {
@@ -47,7 +68,14 @@ class JsonLogFormatter(logging.Formatter):
             "process",
         }
         for key, value in record.__dict__.items():
-            if key not in standard_attrs and key not in {"pr_id", "agent"}:
+            if key not in standard_attrs and key not in {
+                "pr_id",
+                "agent",
+                "agent_name",
+                "event_type",
+                "trace_id",
+                "span_id",
+            }:
                 payload["extra"][key] = value
 
         return json.dumps(payload, separators=(",", ":"))

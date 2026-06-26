@@ -98,6 +98,19 @@ def check_disk_space() -> str:
         return "error"
 
 
+def check_logging() -> str:
+    """Verify logging configuration."""
+    try:
+        root_logger = logging.getLogger()
+        for handler in root_logger.handlers:
+            if handler.formatter and handler.formatter.__class__.__name__ == "JsonLogFormatter":
+                return "configured"
+        return "not_configured"
+    except Exception as e:
+        logger.warning("Health check: Logging check failed: %s", e)
+        return "error"
+
+
 async def get_health_status() -> Dict[str, Any]:
     """Aggregate health checks for all dependencies."""
     redis_status = check_redis()
@@ -107,6 +120,7 @@ async def get_health_status() -> Dict[str, Any]:
     celery_status = check_celery()
     chroma_status = check_chromadb()
     disk_status = check_disk_space()
+    logging_status = check_logging()
 
     # Determine critical statuses
     critical_healthy = (
@@ -138,5 +152,6 @@ async def get_health_status() -> Dict[str, Any]:
             "celery": celery_status,
             "chromadb": chroma_status,
             "disk": disk_status,
+            "logging": logging_status,
         },
     }
