@@ -28,3 +28,7 @@ def test_aggregate_confidence_handles_multiple_agents():
     score = aggregate_confidence(outputs)
     assert 0.0 <= score <= 1.0
 
+
+def test_aggregate_confidence_empty():
+    assert aggregate_confidence([]) == 0.0
+

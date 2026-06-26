@@ -23,3 +23,5 @@ opentelemetry-exporter-otlp-proto-grpc
 sqlalchemy
 asyncpg
 alembic
+pytest-cov
+

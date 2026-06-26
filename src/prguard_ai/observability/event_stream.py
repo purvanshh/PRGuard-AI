@@ -25,7 +25,7 @@ class EventBroker:
             conns = self._connections.get(pr_id)
             if conns and websocket in conns:
                 conns.remove(websocket)
-            if conns and not conns:
+            if conns is not None and not conns:
                 self._connections.pop(pr_id, None)
 
     async def broadcast(self, pr_id: str, event: Dict[str, Any]) -> None:

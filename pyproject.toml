@@ -28,3 +28,7 @@ where = ["src"]
 include = [
   "prguard_ai*",
 ]
+
+[tool.pytest.ini_options]
+addopts = "--cov=src/prguard_ai --cov-report=term-missing --cov-fail-under=70"
+testpaths = ["tests"]
