@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     redis_connect_retries: int = Field(3, validation_alias="REDIS_CONNECT_RETRIES")
     redis_sentinel_hosts: str = Field("", validation_alias="REDIS_SENTINEL_HOSTS")
     redis_sentinel_service_name: str = Field("mymaster", validation_alias="REDIS_SENTINEL_SERVICE_NAME")
-    redis_fallback_to_memory: bool = Field(True, validation_alias="REDIS_FALLBACK_TO_MEMORY")
+    redis_fallback_to_memory: bool = Field(False, validation_alias="REDIS_FALLBACK_TO_MEMORY")
 
     # Hardcoded constants centralized
     max_files_per_pr: int = Field(50, validation_alias="MAX_FILES_PER_PR")

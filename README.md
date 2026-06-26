@@ -242,6 +242,7 @@ The client falls back to `GITHUB_TOKEN` (personal access token) if App auth is n
 | `GITHUB_APP_ID` | No | — | GitHub App ID (for App-based auth) |
 | `GITHUB_APP_INSTALLATION_ID` | No | — | GitHub App installation ID |
 | `GITHUB_APP_PRIVATE_KEY` | No | — | PEM key string or file path |
+| `REDIS_FALLBACK_TO_MEMORY` | No | `False` | Disable silent fallback to in-memory store in production (set to `true` for local dev) |
 
 *\*Required unless GitHub App auth is configured.*
 
