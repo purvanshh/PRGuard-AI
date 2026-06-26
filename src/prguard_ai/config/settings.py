@@ -51,7 +51,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_keys(self) -> Settings:
-        if "PYTEST_CURRENT_TEST" not in os.environ and not self.prguard_offline_mode:
+        is_testing = os.getenv("PRGUARD_TESTING") == "true" or "PYTEST_CURRENT_TEST" in os.environ
+        if not is_testing and not self.prguard_offline_mode:
             if not self.github_token:
                 raise ValueError("GITHUB_TOKEN must not be empty")
             if not self.github_webhook_secret:
