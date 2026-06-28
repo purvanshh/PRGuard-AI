@@ -165,7 +165,7 @@ Every finding carries a `confidence_source` tag that maps to a numeric weight:
 
 ## Production Features
 
-PRGuard AI has been systematically hardened across twelve production phases:
+PRGuard AI has been systematically hardened across fifteen production phases:
 
 | Phase | Feature | Description |
 |-------|---------|-------------|
@@ -175,12 +175,15 @@ PRGuard AI has been systematically hardened across twelve production phases:
 | 4 | Comprehensive Health Checks | `/health`, `/health/ready`, and `/health/live` endpoints covering Redis, PostgreSQL, LLM, GitHub, Celery, ChromaDB, disk space, logging, and repository cache |
 | 5 | Centralized Configuration | All environment variables and constants consolidated into a Pydantic `Settings` model with fail-fast validation |
 | 6 | Redis Token Budgeting | Atomic per-PR token accounting via Redis `WATCH` pipelines with 1-hour TTL; in-memory fallback on Redis failure |
-| 7 | Arbitrator Retry and Degradation | Arbitrator retries up to 2× with exponential backoff; posts degraded review if agents partially fail |
+| 7 | Arbitrator Retry and Degradation | Arbitrator retries up to 2x with exponential backoff; posts degraded review if agents partially fail |
 | 8 | LLM Output Sanitization | Pydantic validation, HTML escaping, non-printable character stripping, and 20-issue-per-agent cap on all LLM outputs |
 | 9 | Production Redis Enforcement | `REDIS_FALLBACK_TO_MEMORY` defaults to `false`; fails fast on connection failure in production |
-| 10 | Test Coverage Enforcement | `pytest-cov` with a 70% minimum threshold; 109 tests at 72%+ coverage |
+| 10 | Test Coverage Enforcement | `pytest-cov` with a 70% minimum threshold enforced in CI |
 | 11 | Structured JSON Logging | `JsonLogFormatter` across all API and Celery worker logs; OpenTelemetry trace/span ID injection; exception stack trace serialization |
 | 12 | Repository Cache | Persistent shallow clone cache with LRU eviction at 10 GB; hard-link copy into analysis sandboxes for near-instant workspace setup |
+| 13 | Prometheus Metrics Hardening | Per-agent latency histograms, circuit breaker state gauge, token budget gauge, agent error counter; all wired to the `/metrics` endpoint |
+| 14 | Evaluation Framework | F1 score added to all evaluation metrics; `evaluate_dataset_file` and `run_evaluation_suite` helpers; full CLI entry point via `python -m prguard_ai.evaluation.evaluator --dataset` |
+| 15 | Coverage Lift to 76% | New test files for structured logging, all Pydantic schemas, task registry, Redis client, and all Celery task functions — 203 tests total |
 
 ---
 
@@ -253,7 +256,7 @@ The server runs on `http://localhost:8000`.
 pytest
 ```
 
-The test suite enforces a minimum coverage threshold of 70%. Tests cover diff parsing, agent analysis, confidence scoring, circuit breaker behavior, token budgeting, health checks, sanitization, repository caching, and the end-to-end pipeline.
+The test suite enforces a minimum coverage threshold of 70%. 203 tests cover diff parsing, agent analysis, confidence scoring, circuit breaker behaviour, token budgeting, health checks, sanitization, repository caching, task registry, Celery task execution, Pydantic schemas, structured logging, and the end-to-end pipeline. Current coverage is 76%.
 
 ---
 
@@ -366,7 +369,7 @@ prguard-ai/
 ├── fixtures/                # Test fixtures and sample diff data
 ├── prompts/                 # Agent prompt templates
 ├── scripts/                 # Utility and maintenance scripts
-├── tests/                   # Unit and integration test suite (109 tests, 72%+ coverage)
+├── tests/                   # Unit and integration test suite (203 tests, 76% coverage)
 ├── .github/workflows/       # GitHub Actions CI pipeline
 ├── Dockerfile               # Python 3.11-slim container image
 ├── docker-compose.yml       # Multi-service orchestration (API, worker, Redis, PostgreSQL)
@@ -395,7 +398,7 @@ prguard-ai/
 
 PRGuard AI includes an evaluation framework for benchmarking agent accuracy against labeled datasets:
 
-1. **Dataset**: Hand-annotated PR diffs in `evaluation/dataset/` with expected issues mapped to specific lines.
+1. **Dataset**: Five hand-annotated PR diffs in `evaluation/dataset/` with expected issues mapped to specific lines.
 2. **Pipeline**: Each diff is processed through all three agents and the arbitrator to produce a detected issue set.
 3. **Metrics**: Standard information-retrieval metrics:
 
@@ -403,17 +406,35 @@ PRGuard AI includes an evaluation framework for benchmarking agent accuracy agai
    |--------|---------|
    | Precision | `TP / (TP + FP)` |
    | Recall | `TP / (TP + FN)` |
+   | F1 | `2 * P * R / (P + R)` |
    | Confidence | Arbitrator's aggregated confidence score |
 
-Run evaluation against a sample:
+Run evaluation against a single dataset file:
 
 ```bash
-python -c "
-from prguard_ai.evaluation.evaluator import evaluate_pr
-import json, pathlib
-result = evaluate_pr(pathlib.Path('evaluation/dataset/example_1.json').read_text())
-print(json.dumps(result, indent=2))
-"
+python -m prguard_ai.evaluation.evaluator --dataset src/prguard_ai/evaluation/dataset/example_1.json
+```
+
+Run evaluation against the full dataset directory and write results to a file:
+
+```bash
+python -m prguard_ai.evaluation.evaluator \
+  --dataset src/prguard_ai/evaluation/dataset/ \
+  --output evaluation_results.json
+```
+
+Or invoke the API directly from Python:
+
+```python
+from prguard_ai.evaluation.evaluator import evaluate_pr, run_evaluation_suite
+from pathlib import Path
+
+# Single diff
+result = evaluate_pr(diff_text, expected_issues=[{"line": 30, "message": "injection"}])
+print(result)  # {"precision": 0.8, "recall": 1.0, "f1": 0.89, ...}
+
+# Full dataset suite
+results = run_evaluation_suite(Path("src/prguard_ai/evaluation/dataset/"))
 ```
 
 ---
@@ -431,6 +452,9 @@ print(json.dumps(result, indent=2))
 - [x] LLM output validation and HTML sanitization
 - [x] Structured JSON logging with OpenTelemetry trace propagation
 - [x] Persistent repository cache with LRU eviction
+- [x] Prometheus metrics hardening — per-agent latency, circuit breaker state, token budget, error counters
+- [x] Evaluation framework with F1 score, batch dataset runner, and CLI entry point
+- [x] Test coverage at 76% across 203 tests (threshold enforced at 70%)
 - [ ] Per-repository `.prguard.yml` configuration for custom thresholds
 - [ ] GitHub App Marketplace listing for one-click installation
 - [ ] PR suggestion API integration for auto-fixable findings
