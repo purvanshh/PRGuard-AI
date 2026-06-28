@@ -9,6 +9,11 @@ from typing import Callable, ParamSpec, TypeVar
 
 from prguard_ai.config.settings import settings
 
+try:
+    from prguard_ai.observability.metrics import record_circuit_state as _record_state
+except Exception:  # pragma: no cover - circular import guard at import time
+    _record_state = None  # type: ignore[assignment]
+
 logger = logging.getLogger(__name__)
 
 P = ParamSpec("P")
@@ -42,6 +47,8 @@ class CircuitBreaker:
                 if now - self.last_state_change > self.reset_timeout:
                     logger.info("Circuit breaker reset timeout expired. Transitioning to HALF_OPEN.")
                     self.state = "HALF_OPEN"
+                    if _record_state:
+                        _record_state("HALF_OPEN")
                 else:
                     raise CircuitBreakerError("Circuit breaker is OPEN. Fast-failing LLM call.")
 
@@ -55,6 +62,8 @@ class CircuitBreaker:
                     logger.info("Call succeeded in HALF_OPEN. Transitioning to CLOSED.")
                     self.state = "CLOSED"
                     self.failure_count = 0
+                    if _record_state:
+                        _record_state("CLOSED")
                 elif self.state == "CLOSED":
                     self.failure_count = 0
             return result
@@ -78,6 +87,8 @@ class CircuitBreaker:
                     logger.error("Circuit breaker threshold reached. Transitioning to OPEN.")
                     self.state = "OPEN"
                     self.last_state_change = time.time()
+                    if _record_state:
+                        _record_state("OPEN")
             raise CircuitBreakerError("Circuit breaker is OPEN or tripped due to a call failure.") from exc
 
 

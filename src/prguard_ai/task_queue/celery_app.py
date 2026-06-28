@@ -16,6 +16,10 @@ from prguard_ai.config.settings import settings
 from prguard_ai.schemas.agent_output import AgentOutput
 from prguard_ai.schemas.pr_report import PullRequestReport
 from prguard_ai.observability.tracing import get_tracer
+from prguard_ai.observability.metrics import (
+    AGENT_EXECUTION_TIME,
+    record_agent_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,18 +73,20 @@ def run_style_agent(diff_text: str, repo_metadata: Dict[str, Any] | None = None)
         meta = repo_metadata or {}
         if meta.get("pr_id"):
             span.set_attribute("pr.id", meta.get("pr_id"))
-        try:
-            output: AgentOutput = analyze_style(diff_text, repo_metadata=meta)
-            return output.dict()
-        except Exception as exc:
-            logger.exception("Style agent task failed")
-            return {
-                "agent": "style",
-                "confidence": 0.0,
-                "issues": [],
-                "llm_skipped": True,
-                "error": str(exc),
-            }
+        with AGENT_EXECUTION_TIME.labels(agent="style").time():
+            try:
+                output: AgentOutput = analyze_style(diff_text, repo_metadata=meta)
+                return output.dict()
+            except Exception as exc:
+                logger.exception("Style agent task failed")
+                record_agent_error("style")
+                return {
+                    "agent": "style",
+                    "confidence": 0.0,
+                    "issues": [],
+                    "llm_skipped": True,
+                    "error": str(exc),
+                }
 
 
 @celery_app.task(
@@ -97,18 +103,20 @@ def run_logic_agent(diff_text: str, repo_metadata: Dict[str, Any] | None = None)
         meta = repo_metadata or {}
         if meta.get("pr_id"):
             span.set_attribute("pr.id", meta.get("pr_id"))
-        try:
-            output: AgentOutput = analyze_logic(diff_text, repo_metadata=meta)
-            return output.dict()
-        except Exception as exc:
-            logger.exception("Logic agent task failed")
-            return {
-                "agent": "logic",
-                "confidence": 0.0,
-                "issues": [],
-                "llm_skipped": True,
-                "error": str(exc),
-            }
+        with AGENT_EXECUTION_TIME.labels(agent="logic").time():
+            try:
+                output: AgentOutput = analyze_logic(diff_text, repo_metadata=meta)
+                return output.dict()
+            except Exception as exc:
+                logger.exception("Logic agent task failed")
+                record_agent_error("logic")
+                return {
+                    "agent": "logic",
+                    "confidence": 0.0,
+                    "issues": [],
+                    "llm_skipped": True,
+                    "error": str(exc),
+                }
 
 
 @celery_app.task(
@@ -125,18 +133,20 @@ def run_security_agent(diff_text: str, repo_metadata: Dict[str, Any] | None = No
         meta = repo_metadata or {}
         if meta.get("pr_id"):
             span.set_attribute("pr.id", meta.get("pr_id"))
-        try:
-            output: AgentOutput = analyze_security(diff_text, repo_metadata=meta)
-            return output.dict()
-        except Exception as exc:
-            logger.exception("Security agent task failed")
-            return {
-                "agent": "security",
-                "confidence": 0.0,
-                "issues": [],
-                "llm_skipped": True,
-                "error": str(exc),
-            }
+        with AGENT_EXECUTION_TIME.labels(agent="security").time():
+            try:
+                output: AgentOutput = analyze_security(diff_text, repo_metadata=meta)
+                return output.dict()
+            except Exception as exc:
+                logger.exception("Security agent task failed")
+                record_agent_error("security")
+                return {
+                    "agent": "security",
+                    "confidence": 0.0,
+                    "issues": [],
+                    "llm_skipped": True,
+                    "error": str(exc),
+                }
 
 
 @celery_app.task(

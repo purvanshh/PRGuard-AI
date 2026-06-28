@@ -2,13 +2,33 @@
 
 from __future__ import annotations
 
-from prometheus_client import Counter, Histogram, Summary
+from prometheus_client import Counter, Gauge, Histogram, Summary
 
+
+# ---------------------------------------------------------------------------
+# Counters
+# ---------------------------------------------------------------------------
 
 TOTAL_PRS_PROCESSED = Counter(
     "prguard_prs_processed_total",
     "Total number of pull requests processed",
 )
+
+LLM_TOKENS_USED = Counter(
+    "prguard_llm_tokens_total",
+    "Total LLM tokens consumed",
+    ["agent", "model"],
+)
+
+AGENT_ERRORS_TOTAL = Counter(
+    "prguard_agent_errors_total",
+    "Total number of agent task errors",
+    ["agent"],
+)
+
+# ---------------------------------------------------------------------------
+# Histograms
+# ---------------------------------------------------------------------------
 
 AGENT_EXECUTION_TIME = Histogram(
     "prguard_agent_execution_seconds",
@@ -16,22 +36,65 @@ AGENT_EXECUTION_TIME = Histogram(
     ["agent"],
 )
 
-LLM_TOKENS_USED = Counter(
-    "prguard_llm_tokens_total",
-    "Total LLM tokens used",
-    ["agent", "model"],
-)
+# ---------------------------------------------------------------------------
+# Summaries
+# ---------------------------------------------------------------------------
 
 REVIEW_CONFIDENCE = Summary(
     "prguard_review_confidence",
     "Distribution of final review confidence scores",
 )
 
+# ---------------------------------------------------------------------------
+# Gauges
+# ---------------------------------------------------------------------------
+
+CIRCUIT_BREAKER_STATE = Gauge(
+    "prguard_circuit_breaker_state",
+    "Current state of the LLM circuit breaker: 0=CLOSED, 1=HALF_OPEN, 2=OPEN",
+)
+
+TOKEN_BUDGET_REMAINING = Gauge(
+    "prguard_token_budget_remaining",
+    "Estimated remaining token budget for the current day",
+)
+
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+_STATE_MAP = {"CLOSED": 0, "HALF_OPEN": 1, "OPEN": 2}
+
+
+def record_circuit_state(state: str) -> None:
+    """Update the circuit breaker state gauge.
+
+    Args:
+        state: One of ``"CLOSED"``, ``"HALF_OPEN"``, or ``"OPEN"``.
+    """
+    CIRCUIT_BREAKER_STATE.set(_STATE_MAP.get(state.upper(), 0))
+
+
+def record_agent_error(agent: str) -> None:
+    """Increment the agent error counter for *agent*."""
+    AGENT_ERRORS_TOTAL.labels(agent=agent).inc()
+
+
+def record_token_budget(remaining: float) -> None:
+    """Set the remaining token budget gauge to *remaining*."""
+    TOKEN_BUDGET_REMAINING.set(remaining)
+
 
 __all__ = [
-    "TOTAL_PRS_PROCESSED",
+    "AGENT_ERRORS_TOTAL",
     "AGENT_EXECUTION_TIME",
+    "CIRCUIT_BREAKER_STATE",
     "LLM_TOKENS_USED",
     "REVIEW_CONFIDENCE",
+    "TOKEN_BUDGET_REMAINING",
+    "TOTAL_PRS_PROCESSED",
+    "record_circuit_state",
+    "record_agent_error",
+    "record_token_budget",
 ]
-
