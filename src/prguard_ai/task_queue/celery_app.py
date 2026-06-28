@@ -76,7 +76,7 @@ def run_style_agent(diff_text: str, repo_metadata: Dict[str, Any] | None = None)
         with AGENT_EXECUTION_TIME.labels(agent="style").time():
             try:
                 output: AgentOutput = analyze_style(diff_text, repo_metadata=meta)
-                return output.dict()
+                return output.model_dump()
             except Exception as exc:
                 logger.exception("Style agent task failed")
                 record_agent_error("style")
@@ -106,7 +106,7 @@ def run_logic_agent(diff_text: str, repo_metadata: Dict[str, Any] | None = None)
         with AGENT_EXECUTION_TIME.labels(agent="logic").time():
             try:
                 output: AgentOutput = analyze_logic(diff_text, repo_metadata=meta)
-                return output.dict()
+                return output.model_dump()
             except Exception as exc:
                 logger.exception("Logic agent task failed")
                 record_agent_error("logic")
@@ -136,7 +136,7 @@ def run_security_agent(diff_text: str, repo_metadata: Dict[str, Any] | None = No
         with AGENT_EXECUTION_TIME.labels(agent="security").time():
             try:
                 output: AgentOutput = analyze_security(diff_text, repo_metadata=meta)
-                return output.dict()
+                return output.model_dump()
             except Exception as exc:
                 logger.exception("Security agent task failed")
                 record_agent_error("security")
@@ -175,7 +175,7 @@ def run_arbitrator(agent_outputs: List[Dict[str, Any]]) -> dict:
                 agent_outputs={o.agent: o for o in outputs}
             )
             report = arbitrate_confidence(context, partial=True)
-            data = report.dict()
+            data = report.model_dump()
             disagreements = getattr(report, "disagreements", [])
             data["disagreements"] = disagreements
             
@@ -194,7 +194,7 @@ def run_arbitrator(agent_outputs: List[Dict[str, Any]]) -> dict:
             for o in agent_outputs:
                 try:
                     out = AgentOutput(**o)
-                    outputs_list.append(out.dict())
+                    outputs_list.append(out.model_dump())
                     issues.extend(out.issues)
                 except Exception:
                     pass
