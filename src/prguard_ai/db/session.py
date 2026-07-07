@@ -36,6 +36,13 @@ async_session = async_sessionmaker(
 )
 
 
+async def init_db() -> None:
+    """Initialize database tables asynchronously."""
+    from prguard_ai.db.models import Base
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
 def run_async(coro: Coroutine[Any, Any, T]) -> Any:
     """
     Safely execute an asynchronous coroutine from either sync or async environments.

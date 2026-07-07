@@ -5,7 +5,7 @@ from __future__ import annotations
 import uvicorn
 
 from prguard_ai.gh_client.webhook_server import app as webhook_app
-from prguard_ai.observability.logging import _get_conn as _init_db  # type: ignore
+from prguard_ai.db.session import init_db, run_async
 from prguard_ai.observability.tracing import configure_tracing
 from prguard_ai.observability.structured_logging import configure_structured_logging
 
@@ -20,7 +20,7 @@ def _configure_logging() -> None:
 def startup() -> None:
     _configure_logging()
     configure_tracing(service_name="prguard-api")
-    _init_db()
+    run_async(init_db())
 
 
 def run() -> None:

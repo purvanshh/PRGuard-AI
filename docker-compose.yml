@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   api:
     build: .
@@ -9,7 +7,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - CHROMA_PERSIST_DIR=/app/.chroma
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/prguard
     ports:
@@ -21,13 +19,13 @@ services:
   worker:
     build: .
     container_name: prguard-worker
-    command: celery -A task_queue.celery_app worker --loglevel=INFO --concurrency=3 -Q style,logic,security,arbitrator,celery
+    command: celery -A prguard_ai.task_queue.celery_app worker --loglevel=INFO --concurrency=3 -Q style,logic,security,arbitrator,celery
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - CHROMA_PERSIST_DIR=/app/.chroma
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/prguard
     depends_on:
@@ -48,7 +46,7 @@ services:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=prguard
     ports:
-      - "5432:5432"
+      - "5435:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
