@@ -1,0 +1,37 @@
+[flake8]
+max-line-length = 120
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    .venv,
+    venv,
+    alembic
+ignore =
+    # Whitespace and formatting rules that are handled by formatters
+    E203,
+    W503,
+    E501,
+    W293,
+    W391,
+    # Module level import not at top of file (common in Celery task setups)
+    E402,
+    # Unused imports (can be cleaned up incrementally)
+    F401,
+    # Local variable assigned but never used
+    F841,
+    # Expected 2 blank lines (formatting)
+    E302,
+    E305,
+    # Expected 1 blank line before nested definition
+    E306,
+    # Ambiguous variable name
+    E741,
+    # Missing whitespace after ','
+    E231,
+    # Inline comment formatting rules (PEP8 spacing)
+    E261,
+    E262,
+    E265,
+    E266

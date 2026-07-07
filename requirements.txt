@@ -24,4 +24,5 @@ sqlalchemy
 asyncpg
 alembic
 pytest-cov
+flake8
 

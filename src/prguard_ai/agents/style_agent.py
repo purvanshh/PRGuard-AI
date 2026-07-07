@@ -12,6 +12,7 @@ from prguard_ai.analysis.diff_parser import DiffHunk, extract_changed_files, par
 from prguard_ai.analysis.repo_indexer import retrieve_similar_code
 from prguard_ai.llm.client import extract_json_from_llm_response, generate_analysis
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
+from prguard_ai.schemas.context import ReviewContext
 
 from prguard_ai.config.settings import settings
 
@@ -311,7 +312,6 @@ class StyleAgent:
     def refine(initial_output: AgentOutput, context: ReviewContext) -> tuple[str, AgentOutput]:
         """Refine style agent issues and generate a dialogue message based on context."""
         from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
-        from prguard_ai.schemas.context import ReviewContext
 
         refine_prompt_path = Path(__file__).resolve().parent.parent.parent.parent / "prompts" / "style_refine_prompt.txt"
         if refine_prompt_path.exists():

@@ -29,6 +29,10 @@ jobs:
           python -m build
           python -c "import tomllib, pathlib; tomllib.loads(pathlib.Path('pyproject.toml').read_text())"
 
+      - name: Run flake8 linter
+        run: |
+          flake8 src/ tests/
+
       - name: Run tests
         run: |
           pytest

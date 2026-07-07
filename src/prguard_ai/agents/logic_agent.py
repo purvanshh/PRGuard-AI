@@ -13,6 +13,7 @@ from prguard_ai.analysis.diff_parser import DiffHunk, extract_context_lines, par
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
 from prguard_ai.llm.client import extract_json_from_llm_response, generate_analysis
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
+from prguard_ai.schemas.context import ReviewContext
 
 from prguard_ai.config.settings import settings
 
@@ -200,7 +201,6 @@ class LogicAgent:
     def refine(initial_output: AgentOutput, context: ReviewContext) -> tuple[str, AgentOutput]:
         """Refine logic agent issues and generate a dialogue message based on context."""
         from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
-        from prguard_ai.schemas.context import ReviewContext
         from prguard_ai.analysis.diff_parser import extract_changed_files
         from prguard_ai.llm.client import extract_json_obj_from_llm_response
 

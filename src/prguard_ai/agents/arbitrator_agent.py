@@ -7,6 +7,7 @@ from typing import Dict, Iterable, List, Tuple
 from prguard_ai.confidence.scoring_engine import aggregate_confidence, calculate_agent_confidence
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 from prguard_ai.schemas.pr_report import PullRequestReport
+from prguard_ai.schemas.context import ReviewContext
 
 
 def detect_agent_disagreements(outputs: Iterable[AgentOutput]) -> List[str]:
@@ -57,8 +58,6 @@ def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullR
     """
     Aggregate agent outputs from context into a single pull request report.
     """
-    from prguard_ai.schemas.context import ReviewContext
-
     outputs = list(context.agent_outputs.values())
     if partial:
         successful_outputs = [o for o in outputs if not getattr(o, "error", None)]
