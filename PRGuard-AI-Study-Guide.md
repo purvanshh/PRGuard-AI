@@ -15,6 +15,7 @@ The system is not a passive linter. It actively surfaces issues that require con
 1. **Pattern matching** (regex, string detection) for deterministic, high-confidence findings.
 2. **AST analysis** using tree-sitter to extract structural summaries of changed code.
 3. **LLM reasoning** via NVIDIA NIM API (OpenAI-compatible) for deeper, context-aware analysis.
+4. **Multi-round iterative dialogue** between agents to refine findings through structured debate.
 
 ### 1.2 Core Problem It Solves
 
@@ -39,9 +40,15 @@ The specific problem is **missed issues in PRs** — specifically:
 | Replay protection | `X-GitHub-Delivery` ID deduplicated in Redis with 5-minute TTL. |
 | Rate limiting | Sliding-window rate limits: 10 PRs/hour per repo, 100 PRs/day per GitHub installation. |
 | Cost budgeting | Daily $5 USD cap per repository on LLM calls (enforced via Redis sorted set). |
-| Repository cloning and sandboxing | Temporary clone of target repository for analysis, cleaned up after completion. |
+| Repository caching with LRU eviction | Shallow clones cached and evicted via LRU when total exceeds configurable size limit. |
 | Async event streaming | WebSocket endpoint (`/stream/{pr_id}`) for live progress events. |
-| Audit logging | SQLite persistence of agent executions, latencies, token usage, and costs. |
+| Audit logging | PostgreSQL persistence of agent executions, latencies, token usage, and costs (via SQLAlchemy + Alembic). |
+| Circuit breaker for LLM | Thread-safe state machine prevents cascading failures when LLM API degrades. |
+| Prometheus metrics | `/metrics` endpoint with counters, histograms, gauges for PRs, tokens, errors, circuit breaker state. |
+| Structured JSON logging | All logs emitted as JSON with OTel trace/span context, injectable `pr_id` and `agent` fields. |
+| Comprehensive health checks | Readiness/liveness endpoints checking Redis, PostgreSQL, LLM, GitHub API, Celery workers, disk space. |
+| Evaluation framework | Precision, recall, F1 scoring against hand-annotated datasets; CLI entrypoint for batch evaluation. |
+| Multi-round iterative dialogue | Coordinator agent orchestrates up to 3 refinement rounds between agents with early stopping. |
 
 ---
 
@@ -49,7 +56,7 @@ The specific problem is **missed issues in PRs** — specifically:
 
 ### 2.1 Overall System Design
 
-The system is a **layered, event-driven architecture** with an HTTP-triggered async pipeline. It is not a monolith in theDDD sense, but rather a **webhook server** (FastAPI) that enqueues work to a **task queue** (Celery + Redis), where workers execute the agents.
+The system is a **layered, event-driven architecture** with an HTTP-triggered async pipeline. It follows a **fan-out / fan-in** pattern: the webhook dispatches three agent tasks simultaneously, optionally runs multi-round iterative refinement, then aggregates via the arbitrator.
 
 ```
 ┌─────────────────────┐
@@ -58,65 +65,92 @@ The system is a **layered, event-driven architecture** with an HTTP-triggered as
 └──────────┬──────────┘
            │
            ▼
-┌─────────────────────────┐
-│  FastAPI Server       │◄──── HMAC Verification
-│  (webhook_server)    │◄──── Replay Protection
-│                    │◄──── Rate Limiting
-│                    │◄──── Repo Clone/Sandbox
-│                    │
-│  [Syncronous        │
-│   Orchestrator]      │
-└─────────┬───────────┘
+┌────────────────────────────────────┐
+│  FastAPI Server                  │
+│  ┌──────────────────────────┐   │
+│  │  Security Validation     │   │◄──── HMAC, rate limit, replay check
+│  │  Health Endpoints        │   │◄──── /health, /health/ready, /health/live
+│  │  Metrics Endpoint        │   │◄──── /metrics (Prometheus)
+│  │  Config Endpoint         │   │◄──── /config (Bearer auth, masked)
+│  │  WebSocket Stream        │   │◄──── /stream/{pr_id}
+│  └──────────────────────────┘   │
+└─────────┬───────────────────────┘
           │
-          │  .delay() — async enqueue
+          │  Celery chain: prepare → agent group → refine(×N) → arbitrate → post
           ▼
-┌───────────────────────────────────────────┐
-│        Celery + Redis Task Queue          │
-│  ┌──────────┬──────────┬────────────┐  │
-│  │ Style    │ Logic    │ Security   │  │
-│  │ Agent    │ Agent    │ Agent     │  │
-│  └────┬─────┴────┬─────┴─────┬────┘  │
-│       │          │           │        │
-│       └──────────┴───────────┘        │
-│                │                     │
-│                ▼                     │
-│       ┌─────────────────┐            │
-│       │ Confidence      │            │
-│       │ Arbitrator      │            │
-│       └────────┬────────┘            │
-└────────────────┴────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│  Celery + Redis (Broker + Result Backend)                  │
+│                                                            │
+│  ┌──────────────────────────────────────────────────────┐ │
+│  │  Orchestrator (review_pr task)                       │ │
+│  │  1. prepare_repository() → clone/fetch cache        │ │
+│  │  2. group(style, logic, security) — parallel        │ │
+│  │  3. iterative refinement (up to 3 rounds)           │ │
+│  │  4. arbitrator.aggregate()                          │ │
+│  │  5. post_review() — summary + inline comments       │ │
+│  └──────────────────────────────────────────────────────┘ │
+│                                                            │
+│  ┌──────────┬──────────┬────────────┬──────────────┐    │
+│  │ Style    │ Logic    │ Security   │ Arbitrator   │    │
+│  │ Agent    │ Agent    │ Agent     │ Agent        │    │
+│  └────┬─────┴────┬─────┴─────┬────┴──────┬───────┘    │
+│       │          │           │           │              │
+│       └──────────┴───────────┘           │              │
+│                │                         │              │
+│                ▼                         ▼              │
+│       ┌─────────────────┐  ┌────────────────────┐      │
+│       │ Coordinator     │  │ Circuit Breaker    │      │
+│       │ (debate loop)   │  │ (LLM resilience)   │      │
+│       └─────────────────┘  └────────────────────┘      │
+└────────────────────────────────────────────────────────┘
                 │
                 ▼
-┌─────────────────────────────────────────────┐
-│  GitHub API Client                        │
-│  - POST review comment                   │
-│  - POST inline comments (up to 10)     │
-│  - POST diff for analysis              │
-└─────────────────────────────────────────────┘
+┌────────────────────────────────────────────────┐
+│  PostgreSQL (SQLAlchemy async + Alembic)      │
+│  - agent_logs (executions, timing, tokens)    │
+│  - llm_usage (token counts, cost per model)  │
+│  - Migrations via Alembic                     │
+└────────────────────────────────────────────────┘
+                │
+                ▼
+┌────────────────────────────────────────────────┐
+│  GitHub API Client                            │
+│  - POST review comment                        │
+│  - POST inline comments (up to 10)            │
+│  - GET diff for analysis                      │
+└────────────────────────────────────────────────┘
 ```
-
-The key architectural choice is the **fan-out / fan-in** pattern: the webhook dispatches three agent tasks simultaneously, waits for all to complete (via `.get(timeout=60)`), then dispatches the arbitrator.
 
 ### 2.2 Major Components and Their Interactions
 
 | Component | File | Responsibility |
 |----------|------|--------------|
-| **Webhook Server** | `gh_client/webhook_server.py` | FastAPI app; receives GitHub webhooks; performs security validation; clones repo; dispatches Celery tasks; waits for results; posts review comments. |
+| **Webhook Server** | `gh_client/webhook_server.py` | FastAPI app; receives GitHub webhooks; performs security validation; manages repo cache; exposes health, metrics, config, and WebSocket endpoints. |
+| **Orchestrator** | `task_queue/orchestrator.py` | Celery task `review_pr` that chains repo preparation → parallel agent group → iterative refinement → arbitration → comment posting. |
 | **Style Agent** | `agents/style_agent.py` | Detects style issues via rule-based checks (tab indentation, long lines, frontend design regression) and LLM-guided style analysis. |
 | **Logic Agent** | `agents/logic_agent.py` | Detects logical defects via pattern matching, AST summary, and LLM reasoning. |
 | **Security Agent** | `agents/security_agent.py` | Detects vulnerabilities via pattern matching (SQL injection, eval/exec, hardcoded secrets) and LLM reasoning. |
-| **Arbitrator** | `agents/arbitrator_agent.py` | Aggregates agent outputs; computes overall confidence; detects inter-agent disagreements. |
+| **Arbitrator** | `agents/arbitrator_agent.py` | Aggregates agent outputs; computes overall confidence; detects inter-agent disagreements; supports partial (degraded) aggregation. |
+| **Coordinator** | `agents/coordinator.py` | Manages multi-round iterative dialogue/debate between agents; decides when to stop refinement. |
 | **Diff Parser** | `analysis/diff_parser.py` | Parses unified Git diffs into structured `DiffHunk` and `DiffLine` objects with precise line numbers. |
-| **AST Parser** | `analysis/ast_parser.py` | Produces structural summaries (functions, variables, control structures) from Python source using tree-sitter orstdlib `ast`. |
+| **AST Parser** | `analysis/ast_parser.py` | Produces structural summaries (functions, variables, control structures) from source using tree-sitter. Supports Python, Go, TypeScript, Rust. |
+| **Repository Cache** | `analysis/repo_cache.py` | Manages shallow-cloned repository cache with LRU eviction and configurable max size. |
 | **Repository Indexer** | `analysis/repo_indexer.py` | Indexes repository code in ChromaDB for style retrieval (currently a no-op; ChromaDB disabled). |
 | **Repository Sandbox** | `analysis/repo_sandbox.py` | Clones target repository to temporary directory; manages cleanup. |
-| **LLM Client** | `llm/client.py` | Wrapper around OpenAI client (NVIDIA NIM API); enforces token budgets; handles retry/backoff; returns stub responses in offline mode. |
+| **Circuit Breaker** | `reliability/circuit_breaker.py` | Thread-safe state machine (`CLOSED → OPEN → HALF_OPEN → CLOSED`) for LLM client resilience. |
+| **LLM Client** | `llm/client.py` | Wrapper around OpenAI client (NVIDIA NIM API); enforces token budgets; handles retry/backoff; integrates with circuit breaker; returns stub responses in offline mode. |
 | **Scoring Engine** | `confidence/scoring_engine.py` | Computes per-issue, per-agent, and aggregate confidence scores with weighted sources. |
 | **Rate Limiter** | `security/rate_limiter.py` | Redis-backed sliding-window rate limits per repository and per installation. |
 | **Budget Manager** | `cost/budget_manager.py` | Enforces daily $5 USD cost cap per repository on LLM calls. |
-| **Task Queue** | `task_queue/celery_app.py` | Celery app definition and task wrappers with autoretry. |
+| **Task Queue** | `task_queue/celery_app.py` | Celery app definition and task wrappers with autoretry, time limits, and per-queue routing. |
 | **Redis Client** | `task_queue/redis_client.py` | Centralized Redis client with support for single-node, sentinel, and in-memory modes. |
-| **Observability** | `observability/` | Structured logging (SQLite), metrics (Prometheus), tracing (OpenTelemetry), and event streaming (WebSocket). |
+| **Health Checks** | `observability/health.py` | Comprehensive health checkers (Redis, PostgreSQL, LLM, GitHub, Celery, ChromaDB, disk, logging) aggregated into critical/non-critical buckets. |
+| **Metrics** | `observability/metrics.py` | Prometheus counters, histograms, summaries, and gauges for system observability. |
+| **Structured Logging** | `observability/structured_logging.py` | JSON log formatter with timestamp, level, OTel trace/span IDs, service, pr_id, agent, and event_type. |
+| **Evaluation** | `evaluation/evaluator.py` | Precision/recall/F1 benchmarking against hand-annotated datasets; CLI entrypoint. |
+| **Database Models** | `db/models.py` | SQLAlchemy declarative models (`AgentLog`, `LLMUsage`) with async SQLAlchemy + asyncpg. |
+| **Database Session** | `db/session.py` | Async engine with connection pooling; `init_db()` for DDL; `run_async()` helper for nested event loop safety. |
+| **Alembic** | `alembic/env.py` | Async migration environment, auto-discovers models, supports offline/online modes. |
 
 ### 2.3 Data Flow Across the System
 
@@ -125,38 +159,33 @@ The key architectural choice is the **fan-out / fan-in** pattern: the webhook di
    - Server validates HMAC signature, replay ID (Redis), timestamp (2-minute window).
    - Validates rate limits (`check_repo_limit`, `check_installation_limit`).
    - Acquires global concurrency slot (`acquire_global_slot`).
+   - Returns `202 Accepted` immediately, enqueues `review_pr` Celery task.
 
-2. **Repository Setup**
-   - Calls `get_pr_diff()` via GitHub API (`github_client.py:53-78`).
-   - Clones repository to sandbox (`clone_repository` → `repo_sandbox.py`).
-   - Initializes index (`initialize_repo_index` → `repo_indexer.py`, no-op).
-   - Builds code graph (`build_code_graph` → `code_graph.py`, best-effort).
+2. **Orchestrator Execution** (`orchestrator.py`)
+   - `prepare_repository()`: fetches PR diff via GitHub API, clones or fetches from repo cache.
+   - `run_agents()`: dispatches `group(style.s(), logic.s(), security.s())` in parallel.
+   - `refine()`: if iterative dialogue enabled, runs coordinator to conduct up to 3 refinement rounds with early stopping.
+   - `arbitrate()`: dispatches arbitrator to aggregate confidence and detect disagreements.
+   - `post_review()`: formats Markdown review comment, posts summary + up to 10 inline comments.
 
-3. **Agent Execution (Parallel)**
-   - Dispatches three Celery tasks:
-     ```python
-     style_result = run_style_agent.delay(diff_text, repo_metadata)
-     logic_result = run_logic_agent.delay(diff_text, repo_metadata)
-     security_result = run_security_agent.delay(diff_text, repo_metadata)
-     ```
+3. **Agent Execution** (Inside Celery Worker)
    - Each agent:
      - Parses diff using `parse_diff()`.
      - Runs rule-based checks.
      - If LLM is available, invokes `generate_analysis()` with agent-specific prompt.
+     - Respects circuit breaker state; if OPEN, skips LLM and falls back to rule-based.
      - Returns `AgentOutput` (agent name, confidence, list of `Issue` objects).
 
 4. **Arbitration**
-   - After all three agents complete, dispatches `run_arbitrator.delay(agent_outputs)`.
-   - Arbitrator calls `aggregate_confidence()` (scoring engine).
-   - Detects disagreements via `detect_agent_disagreements()`.
+   - Aggregates agent outputs; supports partial aggregation if agents fail.
+   - Calls `aggregate_confidence()` and `detect_agent_disagreements()`.
    - Returns `PullRequestReport`.
 
 5. **Response Posting**
-   - Calls `format_pr_review()` to render Markdown.
    - Posts review comment via `post_pr_comment()`.
-   - Iterates issues; posts up to 10 inline comments via `post_inline_comment()`.
-   - Cleans up sandbox (`cleanup_repository`).
-   - Releases concurrency slot (`release_global_slot`).
+   - Posts up to 10 inline comments via `post_inline_comment()`.
+   - Logs execution to PostgreSQL via SQLAlchemy.
+   - Releases concurrency slot.
 
 ---
 
@@ -176,17 +205,18 @@ The key architectural choice is the **fan-out / fan-in** pattern: the webhook di
 
 | Trade-off | Impact |
 |---------|--------|
-| **Synchronous waiting in webhook** (`webhook_server.py:346-351`) | The webhook waits synchronously for all three agents to complete before returning. This is a deliberate choice for simplicity — GitHub expects a response quickly, but the review comment is posted after the webhook returns. In exchange, the system tolerates a 60-second wait per agent. |
-| **In-memory Redis fallback** (`redis_client.py:109-115`) | If Redis is unreachable, the system falls back to `fakeredis`. This allows local development without Docker, but is not production-safe. The trade-off is developer ergonomics vs. operational guarantees. |
+| **Celery chain instead of synchronous wait** | The webhook returns immediately (202 Accepted); the orchestrator handles the full lifecycle asynchronously. This eliminates the 60-second blocking window but means the user doesn't get immediate feedback within the webhook response. |
+| **PostgreSQL for audit logs** | Adds operational dependency compared to SQLite, but enables concurrent writes from multiple API instances, connection pooling, and Alembic-managed migrations. |
 | **Rule-based + LLM hybrid** | The system runs rule-based checks first (fast, deterministic), then falls back to LLM only if needed. This reduces LLM calls and cost, but sacrifices some recall. The trade-off is cost vs. completeness. |
 | **No incremental analysis** | Every `synchronize` event re-analyzes the entire diff. The roadmap includes incremental analysis, but current simplicity favors correctness over optimization. |
+| **Circuit breaker for LLM** | Adds resilience but may reject legitimate LLM requests during recovery window. Tuned constants (`fail_max=5`, `reset_timeout=60s`) bound the impact. |
 
 ### 3.3 When This Architecture Would Fail or Become Inefficient
 
 - **Very large diffs**: Parsing and AST analysis are O(n) in diff size. Diffs with >10,000 lines will exceed the 60-second timeout per agent.
 - **Rate limit exhaustion**: If a repository exceeds 10 PRs/hour or an installation exceeds 100 PRs/day, the system returns 429. Under heavy load from a single active repo, other repos may be starved.
-- **LLM API outage**: If NVIDIA NIM is unavailable, agents fall back to rule-based checks only. High-severity logic issues requiring LLM reasoning will be missed.
-- **Disk space exhaustion**: Repository clones are stored in temporary sandboxes. If cleanup fails (crash during webhook handling), disk space leaks.
+- **LLM API outage**: Circuit breaker transitions to OPEN after 5 failures; agents fall back to rule-based checks only. High-severity logic issues requiring LLM reasoning will be missed during the recovery window.
+- **Disk space exhaustion**: Repository clones are cached on disk. LRU eviction helps but under sustained load from large repos, disk may fill up.
 - **GitHub API rate limits**: Fetching PR diffs and posting comments consume GitHub API quota. The system does not implement GitHub API-side rate limiting.
 
 ---
@@ -201,18 +231,22 @@ The key architectural choice is the **fan-out / fan-in** pattern: the webhook di
 | **Web Framework** | FastAPI | 0.100+ (async, uvicorn host) |
 | **Task Queue** | Celery | 5.x (broker: Redis; result backend: Redis) |
 | **Message Broker** | Redis | 7 (single-node; supports sentinel mode) |
+| **Database** | PostgreSQL | async SQLAlchemy + asyncpg driver |
+| **ORM** | SQLAlchemy | 2.0+ async style (declarative models) |
+| **Migrations** | Alembic | Async environment with auto-discovery |
 | **LLM Client** | openai (NVIDIA NIM) | Uses `openai.OpenAI` with custom base_url |
-| **AST Parsing** | tree-sitter | Python bindings; requires compiled grammar |
+| **AST Parsing** | tree-sitter | Python bindings; supports Python, Go, TypeScript, Rust |
 | **Vector Store** | chromadb | Disabled in current implementation (no-op placeholder) |
 | **Schema Validation** | pydantic | v2 (BaseModel, Field, validator) |
 | **Settings** | pydantic-settings | v2 (`BaseSettings`) |
 | **GitHub Client** | PyGithub | Raw `requests` for diff fetch (GitHub API v3 diff accept header) |
 | **Observability** | OpenTelemetry | API, SDK, OTLP gRPC exporter (optional) |
 | **Metrics** | prometheus-client | Exposed at `/metrics` endpoint |
-| **Database** | SQLite | File-based (`prguard_logs.sqlite`); no migrations |
+| **Structured Logging** | json | Custom `JsonLogFormatter` via stdlib logging |
+| **Linting** | flake8 | Configured in `.flake8` (max-line-length=120, ignores formatter rules) |
 | **Container** | Docker | `python:3.11-slim` base |
 | **Orchestration** | docker-compose | v3.9 (three services: api, worker, redis) |
-| **Testing** | pytest | Test files cover diff parsing, agents, scoring, full pipeline |
+| **Testing** | pytest | 203 tests across diff parsing, agents, scoring, full pipeline, health, metrics, DB, circuit breaker, evaluator, etc. |
 
 ### 4.2 Why Each Was Likely Chosen
 
@@ -221,12 +255,13 @@ The key architectural choice is the **fan-out / fan-in** pattern: the webhook di
 | **FastAPI** | Native async support; automatic OpenAPI docs; Pydantic integration for request/response validation. Uvicorn provides production-grade ASGI server. |
 | **Celery** | Mature, battle-tested task queue with proper task routing, time limits, retry policies, and Redis integration. Supports separate queues needed for per-agent concurrency control. |
 | **Redis** | Serves triple duty: Celery broker, rate limiting backend, cost bucketing, and pub/sub for WebSocket events. Single-node to sentinel modes supported. |
-| **pydantic v2** | Type-safe settings and schemas; `BaseModel` used everywhere from settings (`config/settings.py`) to agent outputs (`schemas/agent_output.py`). |
+| **PostgreSQL + SQLAlchemy** | Replaced SQLite for multi-instance deployment support. Async SQLAlchemy with asyncpg provides connection pooling and concurrent write capability. Alembic manages schema migrations. |
+| **pydantic v2** | Type-safe settings and schemas; `BaseModel` used everywhere from settings (`config/settings.py`) to schemas (`schemas/agent_output.py`). |
 | **PyGithub** (raw `requests` for diff) | PyGithub does not natively support the `application/vnd.github.v3.diff` media type, hence raw `requests.get()` is used in `get_pr_diff()`. |
-| **tree-sitter** | Provides accurate syntactic analysis beyond what stdlib `ast` offers (e.g., preserves exact indentation and whitespace). Falls back to stdlib `ast` when tree-sitter is unavailable. |
-| **SQLite** | Zero-configuration persistence for audit logs. Single-writer model avoids concurrency issues in practice. File-based for easy inspection. |
+| **tree-sitter** | Provides accurate syntactic analysis beyond what stdlib `ast` offers (e.g., preserves exact indentation and whitespace). Multi-language support via compileable grammars. |
 | **Prometheus** | Industry-standard metrics; `/metrics` endpoint auto-scraped by Prometheus. |
 | **OpenTelemetry** | Vendor-neutral tracing. Optional dependency (available under `observability` extra). |
+| **Flake8** | Lightweight static analysis; configured to catch common Python issues without overlapping with formatters. |
 
 ### 4.3 What Alternatives Could Have Been Used and Why They Weren't
 
@@ -235,9 +270,9 @@ The key architectural choice is the **fan-out / fan-in** pattern: the webhook di
 | **Flask** | No native async; FastAPI + Pydantic provides better developer experience. |
 | **HTTPX + asyncio** | Would require custom task queue implementation. Celery provides ready-made retry, routing, and monitoring. |
 | **Kafka** | Operational overhead disproportionate to throughput. Redis is already present. |
-| **PostgreSQL** | Not needed for audit logs; SQLite is sufficient and portable. |
+| **SQLite (for audit)** | Replaced by PostgreSQL. Single-writer SQLite cannot support multi-instance deployment. |
 | **LangChain** | Overkill for simple prompt construction; raw `openai` client suffices. |
-| **SQLAlchemy** | No complex queries; raw `sqlite3` suffices for audit logging. |
+| **Ruff (over flake8)** | Flake8 was chosen for compatibility with existing CI patterns; Ruff remains a future consideration. |
 
 ---
 
@@ -250,131 +285,151 @@ src/prguard_ai/
 │
 ├── agents/
 │   ├── __init__.py                 # Exports all agents
-│   ├── style_agent.py               # Style analysis (293 lines)
-│   ├── logic_agent.py              # Logic analysis (159 lines)
-│   ├── security_agent.py           # Security analysis (143 lines)
-│   └── arbitrator_agent.py          # Confidence aggregation (77 lines)
+│   ├── style_agent.py               # Style analysis
+│   ├── logic_agent.py              # Logic analysis
+│   ├── security_agent.py           # Security analysis
+│   ├── arbitrator_agent.py          # Confidence aggregation
+│   └── coordinator.py              # Multi-round dialogue/debate loop
 │
 ├── analysis/
 │   ├── __init__.py                 # Exports parsers and indexer
-│   ├── diff_parser.py              # Unified diff → DiffHunk[] (234 lines)
-│   ├── ast_parser.py              # Source → AstSummary (224 lines)
+│   ├── diff_parser.py              # Unified diff → DiffHunk[]
+│   ├── ast_parser.py              # Source → AstSummary (multi-language)
+│   ├── repo_cache.py              # Shallow clone cache with LRU eviction
 │   ├── repo_indexer.py            # ChromaDB index (DISABLED - no-op)
-│   ├── repo_sandbox.py           # Git clone → temp dir
+│   ├── repo_sandbox.py           # Git clone → temp dir (legacy)
 │   ├── code_graph.py            # Dependency graph (placeholder)
 │   └── container_runner.py      # Docker-in-Docker (placeholder)
 │
 ├── confidence/
 │   ├── __init__.py               # Exports engine
-│   └── scoring_engine.py         # Weighted confidence logic (101 lines)
+│   └── scoring_engine.py         # Weighted confidence logic
 │
 ├── config/
 │   ├── __init__.py               # Exports settings
-│   └── settings.py               # Pydantic BaseSettings (28 lines)
+│   └── settings.py               # Pydantic BaseSettings (all env vars)
 │
 ├── cost/
 │   ├── __init__.py              # Exports budget manager
-│   └── budget_manager.py        # $5/day per-repo LLM cap (58 lines)
+│   └── budget_manager.py        # $5/day per-repo LLM cap
 │
 ├── dashboard/
 │   ├── __init__.py             # Placeholder
 │   └── app.py                  # Dashboard (placeholder)
 │
 ├── db/
-│   └── __init__.py            # Placeholder (no DB layer)
+│   ├── __init__.py            # Exports
+│   ├── models.py              # SQLAlchemy AgentLog, LLMUsage
+│   ├── redis_client.py       # Alt Redis client (legacy)
+│   └── session.py            # Async engine, connection pool, init_db
 │
 ├── evaluation/
 │   ├── __init__.py           # Exports evaluator
-│   ├── evaluator.py          # Precision/recall benchmarking
-│   └── dataset/             # 5 hand-annotated examples
+│   └── evaluator.py          # Precision/recall/F1 benchmarking + CLI
 │
 ├── gh_client/
 │   ├── __init__.py           # Exports
-│   ├── webhook_server.py     # FastAPI app (551 lines)
-│   ├── github_client.py     # PyGithub wrapper + raw requests (171 lines)
+│   ├── webhook_server.py     # FastAPI app with all endpoints
+│   ├── github_client.py     # PyGithub wrapper + raw requests
 │   └── app_auth.py          # GitHub App authentication (placeholder)
 │
 ├── llm/
 │   ├── __init__.py          # Exports client
-│   └── client.py           # OpenAI/NVIDIA NIM wrapper (221 lines)
+│   └── client.py           # OpenAI/NVIDIA NIM wrapper + circuit breaker
 │
 ├── observability/
 │   ├── __init__.py          # Exports
-│   ├── logging.py          # SQLite audit logging (175 lines)
-│   ├── metrics.py         # Prometheus metrics (placeholder)
-│   ├── tracing.py         # OpenTelemetry tracing (placeholder)
-│   ├── event_stream.py    # WebSocket pub/sub (placeholder)
-│   └── structured_logging.py # Structured logger (placeholder)
+│   ├── health.py            # Comprehensive health checkers
+│   ├── logging.py           # Legacy SQLite audit logging
+│   ├── metrics.py           # Prometheus counters, histograms, gauges
+│   ├── structured_logging.py # JSON log formatter with OTel context
+│   ├── tracing.py          # OpenTelemetry tracing
+│   └── event_stream.py     # WebSocket pub/sub
 │
 ├── reliability/
-│   └── __init__.py        # Placeholder (circuit breaker)
+│   ├── __init__.py        # Exports
+│   └── circuit_breaker.py # Thread-safe state machine
 │
 ├── schemas/
 │   ├── __init__.py       # Exports
-│   ├── agent_output.py   # Issue, AgentOutput (39 lines)
-│   └── pr_report.py     # PullRequestReport (82 lines)
+│   ├── agent_output.py   # Issue, AgentOutput
+│   ├── context.py        # ReviewContext for iterative dialogue
+│   └── pr_report.py     # PullRequestReport
 │
 ├── security/
-│   └── __init__.py     # Placeholder for security middleware
-│   └── rate_limiter.py # Redis sliding-window rate limiting (52 lines)
+│   ├── __init__.py       # Placeholder
+│   └── rate_limiter.py   # Redis sliding-window rate limiting
 │
 └── task_queue/
     ├── __init__.py           # Exports
-    ├── celery_app.py         # Celery app + task definitions (103 lines)
-    ├── redis_client.py     # Centralized Redis client (128 lines)
-    └── task_registry.py   # Concurrency slot management (placeholder)
+    ├── celery_app.py         # Celery app + task definitions
+    ├── orchestrator.py       # review_pr chain task
+    ├── redis_client.py       # Centralized Redis client
+    └── task_registry.py      # Concurrency slot management
 ```
 
 ### 5.1 Responsibility of Each Top-Level Module
 
 | Module | Responsibility |
 |--------|---------------|
-| **agents/** | Implement the three domain-specific analyzers and the arbitrator. Each agent is a pure function `diff_text → AgentOutput`, invoked both directly and via Celery. |
-| **analysis/** | All parsing and repository indexing. `diff_parser.py` is the most critical — it transforms raw diff text into line-precise hunks. |
+| **agents/** | Implement the three domain-specific analyzers, the arbitrator, and the coordinator for multi-round dialogue. Each agent is a pure function invoked both directly and via Celery. |
+| **analysis/** | All parsing, repository caching, and repository management. `diff_parser.py` is the most critical — it transforms raw diff text into line-precise hunks. `repo_cache.py` manages shallow-clone caching with LRU eviction. |
 | **confidence/** | Contains the confidence scoring logic. Acts as a utilities module consumed by the arbitrator and agents. |
 | **config/** | Single source of truth for environment-driven settings. Used everywhere. |
 | **cost/** | Budget management. Enforces the daily $5 cap. Acts as middleware between the LLM client and the API. |
-| **gh_client/** | All GitHub interaction. The webhook server validates and routes; the GitHub client performs API calls. |
-| **llm/** | Single LLM wrapper. All agent code calls `generate_analysis()` from this module, ensuring centralized token budgeting and retry. |
-| **observability/** | Logging, metrics, tracing. All agent executions log to SQLite via `observability/logging.py`. |
-| **schemas/** | Pydantic models for all data structures. Enforces validation everywhere. |
+| **db/** | SQLAlchemy async models and session management for PostgreSQL persistence. Alebmic migrations for schema evolution. |
+| **evaluation/** | Precision/recall/F1 benchmarking framework with CLI entrypoint for batch evaluation over annotated datasets. |
+| **gh_client/** | All GitHub interaction. The webhook server validates and routes; the GitHub client performs API calls. Exposes health, metrics, config, and WebSocket endpoints. |
+| **llm/** | Single LLM wrapper with circuit breaker integration. All agent code calls `generate_analysis()` from this module, ensuring centralized token budgeting, retry, and resilience. |
+| **observability/** | Health checks, Prometheus metrics, structured JSON logging, OpenTelemetry tracing, and WebSocket event streaming. |
+| **reliability/** | Circuit breaker for LLM client resilience. Thread-safe state machine preventing cascading failures. |
+| **schemas/** | Pydantic models for all data structures. Enforces validation everywhere. Includes `ReviewContext` for iterative dialogue state. |
 | **security/** | Rate limiting. Used in the webhook handler before any processing. |
-| **task_queue/** | Celery configuration and Redis connection. All Celery tasks are defined here. |
+| **task_queue/** | Celery configuration, orchestrator chain task, and Redis connection. All Celery tasks are defined here. |
 
 ### 5.2 How Modules Are Connected
 
-The primary connection is through the **webhook server** (`gh_client/webhook_server.py`), which imports and orchestrates all other modules:
+The primary connection is through the **orchestrator** (`task_queue/orchestrator.py`), which chains repository preparation → agent group execution → iterative refinement → arbitration → comment posting:
 
 ```python
-# webhook_server.py (lines 1-51, partial)
-from prguard_ai.analysis.repo_indexer import initialize_repo_index
-from prguard_ai.analysis.code_graph import build_code_graph
-from prguard_ai.analysis.repo_sandbox import clone_repository
-from prguard_ai.gh_client.github_client import get_pr_diff, post_pr_comment, post_inline_comment
-from prguard_ai.observability.logging import log_agent_execution
-from prguard_ai.task_queue.celery_app import run_style_agent, run_logic_agent, run_security_agent, run_arbitrator
-from prguard_ai.security.rate_limiter import check_installation_limit, check_repo_limit
-from prguard_ai.schemas.agent_output import AgentOutput
+# orchestrator.py (simplified)
+chain(
+    prepare_repository.s(repo_full_name, pr_number, github_token, clone_url),
+    run_agents.s(diff_text, repo_path),
+    refine.s(),
+    arbitrate.s(),
+    post_review.s(repo_full_name, pr_number)
+)
 ```
 
-Each agent imports the LLM client:
+Each agent imports the LLM client and scoring engine:
 
 ```python
 # style_agent.py, logic_agent.py, security_agent.py each have:
 from prguard_ai.llm.client import generate_analysis
+from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
 ```
 
-The scoring engine is imported by agents and arbitrator:
+The circuit breaker is integrated into the LLM client:
 
 ```python
-# logic_agent.py, security_agent.py:
-from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
-
-# arbitrator_agent.py:
-from prguard_ai.confidence.scoring_engine import aggregate_confidence, calculate_agent_confidence
+# llm/client.py:
+from prguard_ai.reliability.circuit_breaker import llm_breaker
+# generate_analysis() checks llm_breaker.state before calling API
 ```
 
-All schemas are defined in `schemas/` and used everywhere `AgentOutput`, `Issue`, and `PullRequestReport` appear.
+All database models are defined in `db/models.py` and migrations managed by `alembic/env.py`:
+
+```python
+# db/models.py
+class AgentLog(Base):
+    __tablename__ = "agent_logs"
+    # pr_id, agent, started_at, finished_at, confidence, token_usage, ...
+
+class LLMUsage(Base):
+    __tablename__ = "llm_usage"
+    # pr_id, agent, model, prompt_tokens, completion_tokens, estimated_cost
+```
 
 ---
 
@@ -400,78 +455,47 @@ This is the full lifecycle from webhook reception to comment posting.
   10. Call `check_repo_limit(repo)` and `check_installation_limit(installation_id)`. If either fails, return 429.
   11. Call `is_pr_processing(pr_id)`; if already processing, return `{"status": "ignored"}`.
   12. Call `acquire_global_slot()`; if no slot, return 503 (backpressure).
+  13. Return `202 Accepted` immediately and enqueue `review_pr` Celery task.
 
-#### Step 2: Repository Setup and Diff Fetch
+#### Step 2: Repository Preparation (Inside Celery Worker)
 
-- **Location**: `gh_client/webhook_server.py:292-314`
+- **Location**: `task_queue/orchestrator.py`
 - **Flow**:
   1. Call `get_pr_diff(repo_full_name, pr_number)` → raw unified diff text.
-  2. Extract `clone_url` from payload.
-  3. Call `clone_repository(repo_url, pr_number, repo_full_name)` → `RepoSandbox` object with `.temp_path`.
-  4. Call `initialize_repo_index(repo_path)` → no-op in current implementation.
-  5. Call `build_code_graph(repo_path)` → best-effort, exceptions swallowed.
+  2. Call `get_cached_repo(clone_url, repo_full_name)` → either use cached shallow clone or create new one.
+  3. Call `build_code_graph(repo_path)` → best-effort, exceptions swallowed.
 
-#### Step 3: Agent Task Dispatch
+#### Step 3: Parallel Agent Execution
 
-- **Location**: `gh_client/webhook_server.py:326-351`
+- **Location**: `task_queue/orchestrator.py`
 - **Flow**:
-  1. Record `style_started = time.time()`.
-  2. Call `run_style_agent.delay(diff_text, repo_metadata)`.
-  3. Record timestamps and broadcast events for each agent similarly.
-  4. Call `.get(timeout=60)` on each `AsyncResult`.
-  5. Deserialize each dict to `AgentOutput`:
-     ```python
-     style_output = AgentOutput(**style_output_dict)
-     ```
+  1. Dispatch `group(style.s(), logic.s(), security.s())`.
+  2. Each agent:
+     - Parses diff using `parse_diff()`.
+     - Runs rule-based checks.
+     - Checks circuit breaker state. If CLOSED, invokes `generate_analysis()`.
+     - Returns `AgentOutput`.
 
-#### Step 4: Agent Execution (Inside Celery Worker)
+#### Step 4: Iterative Refinement (Optional)
 
-Each agent follows the same pattern. Example: **Style Agent**:
-
-- **Location**: `agents/style_agent.py:231-290`
+- **Location**: `agents/coordinator.py`
 - **Flow**:
-  1. Parse diff: `parsed = parse_diff(diff_text)`.
-  2. Extract changed files: `extract_changed_files(parsed)[:50]`.
-  3. Rule-based checks over hunks:
-     - Detect tab indentation (`"\t" in text`).
-     - Detect long lines (`len(text) > 120`).
-     - Detect frontend design issues (`_detect_frontend_design_issues()`).
-  4. Retrieve repository style examples: `retrieve_similar_code(snippet)`.
-  5. Build LLM prompt: `_build_llm_input(diff_text, repo_examples)`.
-  6. Call `generate_analysis(prompt, max_tokens=1500, pr_id)`.
-  7. Parse JSON response: `_parse_llm_issues(text)`.
-  8. Attach file paths to issues: `_attach_file_paths_to_llm_issues()`.
-  9. Compute confidence: `0.9 if issues else 0.5`.
-  10. Return `AgentOutput(agent="style", confidence, issues)`.
+  1. Run up to 3 refinement rounds.
+  2. Each round: agents review each other's findings and update their own outputs.
+  3. `CoordinatorAgent.should_stop()` decides early termination.
 
-**Logic Agent** (`agents/logic_agent.py:90-156`):
-
-- Same pattern, but:
-  - Builds AST summary: `_build_ast_summary_for_hunks()` → `summarize_source()`.
-  - Retrieves context lines around changes: `extract_context_lines()`.
-  - LLM prompt includes AST summary and surrounding code.
-  - Confidence: `estimate_issue_confidence(issues, empty_confidence=0.45)`.
-
-**Security Agent** (`agents/security_agent.py:72-135`):
-
-- Same pattern, but:
-  - Pattern detectors defined at module level (`detect_sql_injection`, `detect_eval_usage`, `detect_hardcoded_secrets`).
-  - Detects `eval(`/`exec(`, SQL injection patterns, hardcoded secrets via regex/keyword matching.
-  - Confidence: `estimate_issue_confidence(issues, empty_confidence=0.55)`.
-
-#### Step 5: Arbitrator Execution
+#### Step 5: Arbitration
 
 - **Location**: `agents/arbitrator_agent.py:56-73`
 - **Flow**:
   1. Call `aggregate_confidence(outputs)` → weighted average of agent scores.
-  2. Flatten all issues from all agents.
+  2. If agents failed and `partial=True`, degrade gracefully instead of raising.
   3. Call `detect_agent_disagreements(outputs)` → list of disagreement notes.
-  4. Build `PullRequestReport` with `overall_confidence`, `agent_outputs`, `issues`.
-  5. Attach `disagreements` as dynamic attribute via `setattr()`.
+  4. Build `PullRequestReport`.
 
 #### Step 6: Post Review Comments
 
-- **Location**: `gh_client/webhook_server.py:456-483`
+- **Location**: `task_queue/orchestrator.py`
 - **Flow**:
   1. Call `format_pr_review(arb_output)` → Markdown body.
   2. Call `post_pr_comment(repo, pr_number, body)` → GitHub API.
@@ -481,13 +505,13 @@ Each agent follows the same pattern. Example: **Style Agent**:
      - Skip if no `file_path`.
      - Call `post_inline_comment(repo, pr_number, path, line, body)`.
 
-#### Step 7: Cleanup
+#### Step 7: Audit Logging
 
-- **Location**: `gh_client/webhook_server.py:486-491`
+- **Location**: `db/session.py`, `db/models.py`
 - **Flow**:
-  1. If `sandbox_path` exists, call `cleanup_repository(sandbox_path)`.
-  2. If `registered`, call `complete_pr_processing(pr_id)`.
-  3. Call `release_global_slot()`.
+  1. Log each agent execution to `agent_logs` table (pr_id, agent, timing, confidence, tokens, payload).
+  2. Log LLM usage to `llm_usage` table (model, prompt/completion tokens, cost).
+  3. Both use async SQLAlchemy with connection pooling via `asyncpg`.
 
 ### 6.2 Request → Processing → Response Lifecycle
 
@@ -495,12 +519,13 @@ Each agent follows the same pattern. Example: **Style Agent**:
 |-------|---------------|---------------------|
 | **1. Request Reception** | HTTP POST to `/webhook` with signed JSON | `verify_github_signature()`, `check_repo_limit()`, `check_installation_limit()` |
 | **2. Diff Fetch** | GitHub API returns unified diff | `get_pr_diff()` (`github_client.py`) |
-| **3. Sandbox Setup** | Clone repo to temp dir | `clone_repository()` (`repo_sandbox.py`) |
-| **4. Agent Dispatch** | 3 Celery tasks enqueued | `run_X_agent.delay()` (`celery_app.py`) |
-| **5. Agent Execution** | Each agent runs rule-based + LLM checks | `parse_diff()`, `generate_analysis()`, `analyze_X()` |
-| **6. Arbitration** | Aggregate confidence and detect disagreements | `aggregate_confidence()`, `detect_agent_disagreements()` |
-| **7. Post Comment** | Markdown review + inline comments | `post_pr_comment()`, `post_inline_comment()` |
-| **8. Cleanup** | Delete sandbox, release slot | `cleanup_repository()`, `release_global_slot()` |
+| **3. Repo Caching** | Shallow clone or fetch existing cache | `get_cached_repo()` (`repo_cache.py`) |
+| **4. Agent Dispatch** | 3 Celery tasks in parallel group | `run_X_agent.delay()` via Celery `group()` |
+| **5. Agent Execution** | Each agent runs rule-based + LLM checks | `parse_diff()`, `generate_analysis()` (with circuit breaker), `analyze_X()` |
+| **6. Refinement** | Multi-round dialogue/debate | `CoordinatorAgent.should_stop()`, agent `refine()` |
+| **7. Arbitration** | Aggregate confidence and detect disagreements | `aggregate_confidence()`, `detect_agent_disagreements()` |
+| **8. Post Comment** | Markdown review + inline comments | `post_pr_comment()`, `post_inline_comment()` |
+| **9. Audit Log** | Log to PostgreSQL via SQLAlchemy | `init_db()`, `AgentLog.create()`, `LLMUsage.create()` |
 
 ### 6.3 Real-World Example of How the System Behaves
 
@@ -516,23 +541,27 @@ def run_user_command(cmd: str):
 
 **System behavior:**
 
-1. **Webhook handler** receives the PR event, validates HMAC, rate limits.
-2. **get_pr_diff()** fetches the diff containing the above.
-3. **Style agent**:
+1. **Webhook handler** receives the PR event, validates HMAC, rate limits, returns 202.
+2. **Orchestrator** enqueues `review_pr` chain.
+3. **get_pr_diff()** fetches the diff.
+4. **get_cached_repo()** clones repository (or reuses cache).
+5. **Style agent**:
    - Rule check: line length < 120, no tabs → no issues.
    - LLM: detects `f"echo {cmd}"` is a formatting inconsistency? (subjective) → no issues.
-4. **Logic agent**:
+6. **Logic agent**:
    - Rule check: no bare `except:`, no TODOs → no issues.
    - LLM: with AST summary showing function `run_user_command(cmd: str)`, the LLM may reason that `cmd` is user-controlled and `shell=True` is unsafe → generates a MEDIUM or HIGH issue.
-5. **Security agent**:
-   - Rule check: `shell=True` in `subprocess.run` → flags as potential command injection (via pattern `shell=True` detection in rule-based pass if present).
+7. **Security agent**:
+   - Rule check: `shell=True` in `subprocess.run` → flags as potential command injection (via pattern `shell=True` detection).
    - LLM: also detects command injection → HIGH issue.
-6. **Arbitrator**:
+   - Circuit breaker check: if LLM API is degraded, falls back to rule-based only.
+8. **Refinement round**: Agents review each other's findings; logic and security agree on injection risk.
+9. **Arbitrator**:
    - Aggregates agent scores: average ≈ 0.75.
    - Disagreement detection: logic reports high, style reports none → flagged.
-7. **Post**:
-   - Review comment with both logic and security issues.
-   - Inline comment on line 4 (the `subprocess.run` line).
+10. **Post**:
+    - Review comment with both logic and security issues.
+    - Inline comment on line 4 (the `subprocess.run` line).
 
 ---
 
@@ -540,55 +569,59 @@ def run_user_command(cmd: str):
 
 ### 7.1 Database Schema / Structure
 
-SQLite is used for audit logging. Database file: `prguard_logs.sqlite` (at `observability/logging.py:11`).
+PostgreSQL is used for audit logging, managed via SQLAlchemy async ORM with Alembic migrations.
 
 #### `agent_logs` Table
 
-```sql
-CREATE TABLE agent_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    pr_id TEXT NOT NULL,
-    agent TEXT NOT NULL,          -- "style", "logic", "security", "arbitrator"
-    started_at REAL NOT NULL,    -- Unix timestamp
-    finished_at REAL NOT NULL,   -- Unix timestamp
-    confidence REAL,             -- Confidence 0.0-1.0
-    token_usage INTEGER,           -- Total tokens used
-    execution_duration REAL,    -- finished_at - started_at
-    agent_order INTEGER,          -- 1=style, 2=logic, 3=security, 4=arbitrator
-    payload TEXT NOT NULL          -- JSON string of full AgentOutput
-)
+```python
+# db/models.py
+class AgentLog(Base):
+    __tablename__ = "agent_logs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pr_id: Mapped[str]
+    agent: Mapped[str]           # "style", "logic", "security", "arbitrator"
+    started_at: Mapped[float]    # Unix timestamp
+    finished_at: Mapped[float]   # Unix timestamp
+    confidence: Mapped[float]    # Confidence 0.0-1.0
+    token_usage: Mapped[int]     # Total tokens used
+    execution_duration: Mapped[float]
+    agent_order: Mapped[int]
+    payload: Mapped[str]         # JSON string of full AgentOutput
 ```
 
 #### `llm_usage` Table
 
-```sql
-CREATE TABLE llm_usage (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    pr_id TEXT NOT NULL,
-    agent TEXT NOT NULL,
-    model TEXT,                  -- e.g., "openai/gpt-oss-120b"
-    prompt_tokens INTEGER NOT NULL,
-    completion_tokens INTEGER NOT NULL,
-    estimated_cost_usd REAL NOT NULL
-)
+```python
+class LLMUsage(Base):
+    __tablename__ = "llm_usage"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    pr_id: Mapped[str]
+    agent: Mapped[str]
+    model: Mapped[str]           # e.g., "openai/gpt-oss-120b"
+    prompt_tokens: Mapped[int]
+    completion_tokens: Mapped[int]
+    estimated_cost_usd: Mapped[float]
 ```
 
 ### 7.2 Data Flow and Storage Logic
 
-- **Write path**: After each agent completes (lines 358-422 in `webhook_server.py`), `log_agent_execution()` is called, which opens a new sqlite3 connection, executes an INSERT, and closes. No connection pooling.
-- **Read path**: The `/review/{pr_id}` endpoint calls `fetch_pr_logs(pr_id)`, which selects from `agent_logs` ordered by `started_at`.
-- **No migrations**: The `_get_conn()` function in `observability/logging.py` creates tables on every call if they don't exist (`CREATE TABLE IF NOT EXISTS`). This is safe for single-writer use but would cause race conditions under concurrent writes from multiple API instances.
+- **Write path**: After each agent completes, the orchestrator logs execution via `AgentLog.create()` and `LLMUsage.create()` using async SQLAlchemy sessions with connection pooling (pool_size=10, max_overflow=20).
+- **Read path**: The `/review/{pr_id}` endpoint fetches PR logs using async queries.
+- **Migrations**: Managed via Alembic. Auto-discovers `Base.metadata`. Supports both offline and online migration modes.
+- **Initialization**: `init_db()` called on startup to ensure tables exist; `run_async()` helper handles both running and absent event loops.
 
 ### 7.3 Caching, Indexing, Optimization Techniques
 
 | Technique | Location | Implementation |
 |-----------|----------|----------------|
+| **Repository cache** | `analysis/repo_cache.py` | Shallow clones (`--depth 1`) fetched or updated; LRU eviction when total exceeds `repo_cache_max_size_gb`; tracks last access via timestamp files. |
 | **Repository style index** | `analysis/repo_indexer.py` | ChromaDB index (currently disabled/no-op). Intended for retrieving similar code snippets to pass to LLM as context. |
 | **Code graph cache** | `analysis/code_graph.py` | Builds dependency graph of repository; best-effort caching. |
 | **Replay protection cache** | `redis_client.py:webhook_server` | Redis `SETNX` with 5-minute TTL at key `prguard:webhook:delivery:{delivery_id}`. |
 | **Rate limiting** | `security/rate_limiter.py` | Redis sorted set (`ZSET`) with sliding window. |
 | **Cost bucketing** | `cost/budget_manager.py` | Redis string incremented daily, expired at end of day. |
 | **Global concurrency slots** | `task_registry.py` | Redis counter for max concurrent PRs. |
+| **Circuit breaker state** | `reliability/circuit_breaker.py` | In-memory thread-safe state machine; state recorded via Prometheus gauge. |
 
 ---
 
@@ -597,51 +630,79 @@ CREATE TABLE llm_usage (
 ### 8.1 Multi-Agent Fan-Out / Fan-In
 
 - **What**: One orchestrator dispatches multiple parallel workers, then aggregates results.
-- **Where**: `webhook_server.py:326-433`.
+- **Where**: `task_queue/orchestrator.py` uses Celery `group()` for parallel dispatch.
 - **Why**: Different issue domains require different detectors. Parallel execution reduces wall-clock time.
 - **Trade-off**: Complexity of result aggregation; potential for inconsistent findings across agents.
 
-### 8.2 Confidence Weighting
+### 8.2 Celery Chain Pattern
+
+- **What**: A sequential chain of Celery tasks: prepare → run_agents → refine → arbitrate → post_review.
+- **Where**: `task_queue/orchestrator.py`.
+- **Why**: Each step depends on the previous result. Chain enforces ordering while allowing parallel sub-steps (group within chain).
+- **Trade-off**: If one step fails, subsequent steps don't execute. Partial aggregation mitigates agent failures.
+
+### 8.3 Confidence Weighting
 
 - **What**: Each issue has a `confidence_source` tag (`rule_based`, `llm_reasoning`, `inferred`) mapped to a numeric weight. Per-agent confidence blends base score with average issue weight. Aggregate confidence boosts by 0.1 if any high-severity issue exists.
 - **Location**: `confidence/scoring_engine.py`.
 - **Why**: Rule-based findings are deterministic → higher weight. LLM findings are probabilistic → lower weight. Aggregated score reflects cross-agent validation.
 - **Trade-off**: Weights are tuned constants; may not generalize across all issue types.
 
-### 8.3 Disagreement Detection
+### 8.4 Disagreement Detection
 
 - **What**: The arbitrator compares severity distributions across agents. If one agent reports high-severity issues and another reports none, a disagreement note is added to the review.
 - **Location**: `arbitrator_agent.py:12-46`.
 - **Why**: When agents disagree, it's worth surfacing the disagreement to the human reviewer.
 - **Trade-off**: Disagreement detection is naive (only compares presence/absence of HIGH severity).
 
-### 8.4 Hybrid Rule-Based + LLM Analysis
+### 8.5 Hybrid Rule-Based + LLM Analysis
 
-- **What**: Each agent runs deterministic checks first (fast, high-confidence), then invokes LLM for deeper analysis. Issues from both passes are merged.
+- **What**: Each agent runs deterministic checks first (fast, high-confidence), then optionally invokes LLM for deeper analysis. Issues from both passes are merged.
 - **Location**: Each agent's `analyze_X()` function.
 - **Why**: Rule-based checks catch obvious patterns (SQL injection regex, `eval(` keyword). LLM catches context-dependent issues (command injection across multiple lines, logical edge cases).
-- **Trade-off**: LLM calls introduce latency, cost, and non-determinism. Offline mode returns empty results.
+- **Trade-off**: LLM calls introduce latency, cost, and non-determinism. Circuit breaker protects against LLM API degradation.
 
-### 8.5 Celery Task with Autoretry
+### 8.6 Circuit Breaker for LLM
 
-- **What**: Each agent task has `autoretry_for=(Exception,)`, `retry_backoff=True`, `retry_kwargs={"max_retries": 1}`.
-- **Location**: `task_queue/celery_app.py:49-79`.
-- **Why**: Transient failures (Redis blip, LLM API timeout) should not cause PR review to fail silently.
-- **Trade-off**: One retry may double execution time; max_retries=1 keeps it bounded.
+- **What**: Thread-safe state machine: `CLOSED` → `OPEN` (after `fail_max` failures) → `HALF_OPEN` (after `reset_timeout`) → `CLOSED` (on success) or back to `OPEN`.
+- **Location**: `reliability/circuit_breaker.py`.
+- **Why**: Prevents cascading failures when LLM API degrades; allows recovery without manual intervention.
+- **Trade-off**: Legitimate requests may be rejected during OPEN state; tuned constants bound the impact.
 
-### 8.6 Sliding Window Rate Limiting
+### 8.7 Multi-Round Iterative Dialogue
+
+- **What**: Up to 3 refinement rounds where agents review each other's findings and update their outputs. `CoordinatorAgent.should_stop()` enables early termination.
+- **Location**: `agents/coordinator.py`.
+- **Why**: Single-pass analysis may miss cross-cutting concerns. Dialogue allows agents to discover issues they'd individually miss.
+- **Trade-off**: Each round doubles LLM cost and latency; `max_rounds=3` bounds the overhead.
+
+### 8.8 Partial Aggregation (Degraded Mode)
+
+- **What**: If some agents fail (timeout, exception), the arbitrator aggregates only succeeded agents instead of raising.
+- **Location**: `arbitrator_agent.py`.
+- **Why**: Agent failures shouldn't block the entire review. Degraded review is better than no review.
+- **Trade-off**: Degraded reviews have lower confidence and may miss issues from the failed domain.
+
+### 8.9 Sliding Window Rate Limiting
 
 - **What**: Redis sorted set per key; on each request, remove entries older than window, add new entry with score=timestamp, count entries. If count > limit, reject.
 - **Location**: `security/rate_limiter.py:18-36`.
 - **Why**: Fixed-window counters allow burst at window boundaries; sliding window smooths traffic.
 - **Trade-off**: Requires Redis; graceful fallback to allow-all if Redis unavailable.
 
-### 8.7 Budget Manager with Daily Cap
+### 8.10 Budget Manager with Daily Cap
 
 - **What**: Redis string per repository per day; incremented on each LLM call with estimated cost. If value > $5, reject new calls.
 - **Location**: `cost/budget_manager.py`.
 - **Why**: Unbounded LLM usage would make the system prohibitively expensive. Daily cap per repo enforces budget discipline.
 - **Trade-off**: Legitimate high-volume repos hit cap; no queueing or priority.
+
+### 8.11 Repository Cache with LRU Eviction
+
+- **What**: Shallow clones (`--depth 1`) stored on disk; LRU eviction when total exceeds `repo_cache_max_size_gb`; last access tracked via `.last_accessed` timestamp files.
+- **Location**: `analysis/repo_cache.py`.
+- **Why**: Cloning large repos on every PR is slow and wasteful. Caching reduces clone overhead to a single fetch-update.
+- **Trade-off**: Cache consumes disk space; eviction policy may remove repos that are about to receive new PRs.
 
 ---
 
@@ -651,31 +712,32 @@ CREATE TABLE llm_usage (
 
 | Bottleneck | Location | Impact |
 |-----------|----------|--------|
-| **Synchronous wait in webhook** | `webhook_server.py:346-351` | Each agent call `.get(timeout=60)` blocks the webhook thread. With 3 agents + 1 arbitrator, worst-case blocking time ≈ 4×60s = 240s. GitHub webhook timeout is ~10s, so the webhook may return 504 before agents complete if Celery is backlogged. |
-| **No incremental diff analysis** | All agents call `parse_diff()` on full diff every time. | Large diffs (>10k lines) cause O(n) parsing and O(n) AST summarization per agent, repeated 3x. |
-| **SQLite single-writer** | `observability/logging.py` | Every `log_agent_execution()` opens and closes a connection. Under concurrent requests from 3+ webhooks, writer lock contention. |
-| **LLM API latency** | `llm/client.py:141-209` | Each retry attempt adds `RETRY_BACKOFF_SECONDS * attempt`. With MAX_RETRIES=3 and backoff=2s, worst-case LLM call = 6s extra. |
-| **Repository cloning** | `repo_sandbox.py` | Small clones (<10MB) are fast; larger repos (100MB+) can take 10-30 seconds, blocking the webhook while cloning. |
+| **Repository cloning/caching** | `repo_cache.py` | Initial clone for large repos (100MB+) can take 10-30 seconds. Cache hits are fast, but cache misses block the chain. |
+| **LLM API latency** | `llm/client.py` | Each LLM call adds 2-30 seconds. With 3 agents + refinement rounds, worst-case latency accumulates. Circuit breaker mitigates during degradation. |
+| **PostgreSQL connection pool** | `db/session.py` | Pool size of 10 may exhaust under high concurrency; `max_overflow=20` provides headroom. |
+| **No incremental diff analysis** | All agents call `parse_diff()` on full diff every time. | Large diffs (>10k lines) cause O(n) parsing and O(n) AST summarization per agent, repeated across agents. |
+| **GitHub API rate limits** | `github_client.py` | Fetching diffs and posting comments consume GitHub API quota. No GitHub API-side retry or backoff. |
 
 ### 9.2 How It Scales (Or Doesn't)
 
-- **Horizontal**: Workers can be scaled by adding more Celery worker processes. However, the webhook server itself is single-threaded (uvicorn default). Under load, the webhook becomes the bottleneck.
-- **Vertical**: The `task_time_limit=60` and `task_soft_time_limit=45` in Celery config cap individual task runtime. This prevents runaway tasks but also means large diffs may timeout.
-- **Database**: SQLite is single-writer. Under concurrent webhook invocations, writes would serialize at the SQLite layer. Not suitable for multi-instance deployment.
+- **Horizontal**: Workers can be scaled by adding more Celery worker processes. PostgreSQL with connection pooling supports concurrent webhook instances. Redis single-node may become bottleneck; sentinel mode for HA.
+- **Vertical**: Celery task time limits (45s soft, 60s hard) cap individual task runtime. Large diffs may timeout.
+- **Database**: PostgreSQL provides concurrent write support. Alembic migrations enable schema evolution without downtime.
+- **Repository cache**: LRU eviction prevents unbounded disk growth but may cause cache churn under high repo turnover.
 
 ### 9.3 Suggestions for Improvement
 
-1. **Make webhook async**: Replace `.get(timeout=60)` with `await` on Celery result using aasync Celery (celery[gevent] or celery[eventlet], or switch to a proper async task queue like `temporal`). Post comments via separate async task after webhook returns.
+1. **Incremental analysis**: On `synchronize` event, store the previous diff in Redis. Compute diff of diffs. Only analyze changed hunks.
 
-2. **Incremental analysis**: On `synchronize` event, store the previous diff in Redis. Compute diff of diffs. Only analyze changed hunks.
+2. **GitHub API caching**: Cache PR diffs with ETag/Last-Modified headers. Avoid refetching unchanged diffs.
 
-3. **Connection pooling for SQLite**: Replace per-call `sqlite3.connect()` with a persistent connection or switch to PostgreSQL.
+3. **Result caching**: Store `PullRequestReport` in Redis keyed by (`repo_full_name`, `pr_number`, `diff_hash`). If PR re-opened without new commits, return cached review.
 
-4. **Code graph caching**: Cache repository dependency graph in Redis with per-repo TTL. Reuse across PRs to same repo.
+4. **Cached LLM responses**: Cache LLM responses for identical prompts (same diff + same agent). Reduces cost and latency.
 
-5. **GitHub API caching**: Cache PR diffs with ETag/Last-Modified headers. Avoid refetching unchanged diffs.
+5. **Adaptive refinement**: Adjust `max_rounds` based on diff complexity or agent disagreement magnitude instead of fixed 3 rounds.
 
-6. **Result caching**: If PR is reopened without new commits, return cached review instead of re-running agents.
+6. **Per-repo configuration**: Add a `.prguard.yml` in repository root. Allow per-repo overrides for severity thresholds, ignored files, agent behavior, cache size.
 
 ---
 
@@ -689,20 +751,21 @@ CREATE TABLE llm_usage (
 | **No per-file confidence scoring** | Medium | All issues from a 1000-line file are treated with same confidence as issues from a 10-line file. |
 | **No support for edited comments** | Low | If user edits a PR comment, the system does not update its audit log. |
 | **No idempotency for comments** | Low | If webhook retried (e.g., GitHub didn't receive 200), duplicate comments may be posted. |
-| **No encryption at rest** | High | SQLite and Redis contain PR diffs and audit logs. If container is compromised, plain-text code is exposed. |
+| **No encryption at rest** | High | PostgreSQL and Redis contain PR diffs and audit logs. If container is compromised, plain-text code is exposed. |
 | **Hardcoded severity thresholds** | Low | Severity thresholds (`len(text) > 120`, font size < 12px) are hardcoded. No per-repo configuration yet. |
-| **No multi-language AST** | High | `ast_parser.py` only supports Python. If repo contains Go, Rust, TypeScript, the tree-sitter fallback is a no-op. |
+| **ChromaDB is still disabled** | Medium | `repo_indexer.py` is entirely no-op. ChromaDB is in requirements.txt but never instantiated. |
 
 ### 10.2 Technical Debt Areas
 
 | Area | Evidence |
 |------|----------|
 | **ChromaDB is disabled** | `repo_indexer.py` is entirely no-op. ChromaDB is in requirements.txt but never instantiated. |
-| **Code graph is placeholder** | `code_graph.py` exists but likely `build_code_graph()` is a stub. No evidence of actual graph building in the codebase. |
-| **Fake Redis fallback** | `redis_client.py:109-115` silently falls back to in-memory `fakeredis` in production if Redis is unreachable. This can mask infrastructure failures. |
-| **Offline mode as test stub** | `llm/client.py` returns empty `[]` if API key missing or offline mode enabled. This means tests pass but production silently under-performs. |
-| **No test fixtures for large diffs** | `fixtures/sample_diff.txt` is tiny. No stress test of parser with 10k+ lines. |
+| **Code graph is placeholder** | `code_graph.py` is a stub. No evidence of actual graph building in the codebase. |
+| **Fake Redis fallback** | `task_queue/redis_client.py` silently falls back to in-memory `fakeredis` if Redis is unreachable (though disabled by default in production). |
+| **Dashboard/app.py is placeholder** | `dashboard/app.py` exists but is not wired to any route or functionality. |
 | **App auth is placeholder** | `gh_client/app_auth.py` likely returns a stub. GitHub App integration not fully implemented. |
+| **Legacy SQLite logging still present** | `observability/logging.py` still has SQLite-based logging code alongside the new PostgreSQL/SQLAlchemy implementation. |
+| **Multiple Redis client implementations** | `task_queue/redis_client.py` and `db/redis_client.py` both exist, suggesting incomplete consolidation. |
 
 ### 10.3 What Would Break Under Scale or Edge Cases
 
@@ -713,7 +776,8 @@ CREATE TABLE llm_usage (
 | **Non-Python files** | Logic and security agents run regex on any language. False positives (e.g., JavaScript `eval()` is different from Python `eval()`). |
 | **Very long lines (>10k chars)** | Diff parser line buffer may overflow; rule check `len(text) > 120` becomes meaningless. |
 | **GitHub API rate limit** | `get_pr_diff()` and `post_pr_comment()` call GitHub API; if rate limited, entire webhook fails. No GitHub API-side retry. |
-| **Concurrent webhooks from same repo** | `is_pr_processing()` and `register_pr_processing()` provide basic idempotency, but SQLite logging under concurrent writes would fail. |
+| **Circuit breaker thrashing** | If LLM API is intermittently failing, the circuit breaker may oscillate between OPEN and CLOSED states, causing inconsistent behavior. |
+| **Multiple PRs to same cached repo** | Concurrent writes to the same cached repo directory could cause corruption. No file-level locking in `repo_cache.py`. |
 
 ---
 
@@ -727,19 +791,19 @@ CREATE TABLE llm_usage (
 | **Add file-level confidence** | Medium | Weight confidence by file size and line count. Large files that affect many modules should have higher confidence. |
 | **Incremental diff analysis** | Medium | On `synchronize`, compute diff between current and base, only analyze changed hunks. Cache base diff in Redis. |
 | **GitHub App fully implemented** | High | Complete `app_auth.py` to support GitHub App authentication (currently a placeholder). This enables fine-grained permission management. |
-| **Multi-language AST parser** | High | Add tree-sitter grammars for Go, TypeScript, Rust, JavaScript. Currently Python-only. |
-| **Replace SQLite with PostgreSQL** | Medium | Single-writer SQLite cannot support multi-instance deployment. PostgreSQL provides connection pooling and ACID compliance. |
+| **Cached LLM responses** | Medium | Cache LLM responses for identical prompts to reduce cost and latency. Use Redis with diff hash + agent as key. |
 | **Per-repo configuration** | Medium | Add a `.prguard.yml` in repository root. Allow per-repo overrides for severity thresholds, ignored files, agent behavior. |
+| **File-level locking for repo cache** | Low | Add file-level locking to prevent concurrent corruption when multiple PRs access the same cached repo simultaneously. |
 
 ### 11.2 Better Architectural Alternatives
 
-1. **Event-driven architecture**: Instead of synchronous waiting in webhook, use a message queue (Redis pub/sub) to notify the API server when agents complete. The webhook returns immediately; the review comment is posted asynchronously. This removes the 60-second blocking window.
+1. **Event-driven architecture**: Instead of Celery chain, use Redis pub/sub to notify downstream components when agents complete. This allows more flexible composition and real-time streaming of results.
 
-2. **Result caching**: Store `AgentOutput` in Redis keyed by (`repo_full_name`, `pr_number`, `diff_hash`). On `synchronize`, if diff hash unchanged, return cached review.
+2. **Result caching**: Store `PullRequestReport` in Redis keyed by (`repo_full_name`, `pr_number`, `diff_hash`). On `synchronize`, if diff hash unchanged, return cached review.
 
-3. **Circuit breaker for LLM**: Wrap LLM client in circuit breaker pattern (e.g., `pybreaker`). If LLM error rate > threshold, stop invoking LLM in agents, fall back to rule-based only.
+3. **Adaptive circuit breaker**: Use a failure rate window (e.g., 50% failure in last 100 calls) instead of a simple counter to avoid oscillation during intermittent failures.
 
-4. **Multi-instance deployment**: Add a load balancer in front of multiple FastAPI replicas. Replace SQLite with shared PostgreSQL. Redis already supports sentinel.
+4. **GitHub Actions integration**: Instead of webhook server, distribute as a GitHub Action that runs in the Actions runner. Eliminates hosting concerns and NAT/firewall issues.
 
 ### 11.3 Refactoring Suggestions
 
@@ -747,9 +811,11 @@ CREATE TABLE llm_usage (
 
 2. **Unify confidence calculation**: Move all confidence computation into `confidence/scoring_engine.py`. Currently duplicated in agents and arbitrator.
 
-3. **Remove dead code**: Remove `code_graph.py`, `container_runner.py`, `dashboard/`, `reliability/`, `db/` if they are placeholders.
+3. **Consolidate Redis clients**: Currently `task_queue/redis_client.py`, `db/redis_client.py`, `rate_limiter.py`, `budget_manager.py`, `task_registry.py` each import their own Redis instance. Consolidate to a single Redis client factory.
 
-4. **Consolidate Redis clients**: Currently `redis_client.py`, `rate_limiter.py`, `budget_manager.py`, `task_registry.py` each import their own Redis instance. Consolidate to a single Redis client factory.
+4. **Remove dead code**: Remove old SQLite logging code in `observability/logging.py` once PostgreSQL path is fully proven. Remove placeholder directories (`dashboard/`, `db/__init__.py` legacy, `code_graph.py`).
+
+5. **Standardize error handling**: Agent exception handling is inconsistent — some catch broadly, others propagate. Standardize around the partial aggregation pattern used in the arbitrator.
 
 ---
 
@@ -759,25 +825,35 @@ CREATE TABLE llm_usage (
 
 | Concept | Where It Appears | Study Focus |
 |---------|-----------------|------------|
-| **Multi-agent orchestration** | `webhook_server.py:326-433` | Fan-out/fan-in pattern with parallel Celery tasks. |
+| **Multi-agent orchestration** | `task_queue/orchestrator.py` | Celery chain + group pattern for parallel dispatch and sequential aggregation. |
+| **Celery chains and groups** | `task_queue/orchestrator.py` | How `chain()` and `group()` compose to build complex workflows. |
+| **Circuit breaker pattern** | `reliability/circuit_breaker.py` | Thread-safe state machine with configurable thresholds and reset timeout. |
 | **Confidence scoring with weighted sources** | `confidence/scoring_engine.py` | Blending deterministic and probabilistic signals. |
 | **Hybrid rule-based + LLM analysis** | Each agent's `analyze_X()` | Running deterministic checks before expensive LLM calls. |
 | **Diff parsing** | `analysis/diff_parser.py` | Understanding unified diff format and line number tracking. |
-| **AST summarization** | `analysis/ast_parser.py` | Tree-sitter vs stdlib `ast` fallback. |
+| **AST summarization** | `analysis/ast_parser.py` | Tree-sitter vs stdlib `ast` fallback; multi-language support. |
+| **Repository caching** | `analysis/repo_cache.py` | LRU eviction policy, shallow clone optimization. |
 | **Rate limiting (sliding window)** | `security/rate_limiter.py` | Redis sorted set implementation. |
 | **Cost budgeting** | `cost/budget_manager.py` | Daily token budget enforcement. |
 | **Celery task autoretry** | `task_queue/celery_app.py` | Task retry policies and time limits. |
 | **GitHub webhook security** | `webhook_server.py:106-285` | HMAC verification, replay protection, timestamp validation. |
-| **Audit logging** | `observability/logging.py` | SQLite persistence in code review. |
+| **Async SQLAlchemy + Alembic** | `db/models.py`, `db/session.py`, `alembic/env.py` | asyncpg driver, connection pooling, migration management. |
+| **Prometheus metrics** | `observability/metrics.py` | Counters, histograms, summaries, gauges for observability. |
+| **Structured logging** | `observability/structured_logging.py` | JSON formatter with OTel context injection. |
+| **Health checks** | `observability/health.py` | Aggregated health status with critical/non-critical buckets. |
+| **Evaluation framework** | `evaluation/evaluator.py` | Precision, recall, F1 score computation for benchmarking. |
 
 ### 12.2 What Skills This Project Demonstrates
 
 - **Building a multi-agent system**: Designing specialized agents that each focus on a single domain (style, logic, security) and aggregating their results.
 - **Hybrid AI pipelines**: Combining deterministic rule-based checks with probabilistic LLM reasoning in a single processing pipeline.
-- **API integration**: Building and securing a webhook server that integrates with GitHub's API and accepts external LLM providers.
+- **Resilience patterns**: Circuit breaker, partial aggregation, retry with backoff, degraded mode operation.
+- **API integration**: Building and securing a webhook server that integrates with GitHub's API and external LLM providers.
 - **Distributed task queues**: Using Celery to run long-running analysis tasks asynchronously with retry and time limits.
-- **Observability**: Structured logging, Prometheus metrics, OpenTelemetry tracing — all integrated into a single pipeline.
-- **Security**: HMAC verification, rate limiting, budget management, and sandboxed code execution.
+- **Observability**: Structured JSON logging, Prometheus metrics, OpenTelemetry tracing, comprehensive health checks.
+- **Data persistence**: Async SQLAlchemy with PostgreSQL, Alembic migrations, Redis caching.
+- **DevOps**: Docker, docker-compose, CI pipeline with flake8 linting, 203 tests with 76% coverage.
+- **Security**: HMAC verification, rate limiting, budget management, input sanitization, circuit breaker for API resilience.
 
 ### 12.3 How to Replicate or Build Something Similar
 
@@ -785,22 +861,26 @@ To build a similar multi-agent code review system:
 
 1. **Start with the diff parser**: Before any agents, build a robust `parse_diff()` that transforms unified diffs into line-precise hunks. This is the foundation.
 
-2. **Design agents as pure functions**: Each agent should be a function `(diff_text, metadata) -> AgentOutput`. This makes them testable and Celery-wrappable.
+2. **Design agents as pure functions**: Each agent should be a function `(diff_text, metadata) -> AgentOutput`. This makes them testable, Celery-wrappable, and easy to compose in chains.
 
 3. **Choose your analysis approach**:
    - **Rule-based**: Regex, keyword matching, AST pattern matching.
    - **LLM-based**: Prompt engineering with context.
    - **Hybrid**: Run rule-based first (fast), LLM fallback for uncertain cases.
 
-4. **Add confidence scoring**: Tag each issue with a source (`rule_based`, `llm_reasoning`, `inferred`). Weight aggregate scores accordingly.
+4. **Add a circuit breaker early**: LLM APIs are the most failure-prone component. A circuit breaker prevents cascading failures and maintains system stability.
 
-5. **Add disagreement detection**: Aggregate scores across agents and surface disagreements.
+5. **Add confidence scoring**: Tag each issue with a source (`rule_based`, `llm_reasoning`, `inferred`). Weight aggregate scores accordingly.
 
-6. **Integrate with a webhook**: Secure with HMAC, rate limit, replay protection.
+6. **Design the orchestrator**: Use Celery chains and groups to compose prepare → analyze → refine → arbitrate → post workflow.
 
-7. **Choose a task queue**: Celery is a good choice for Python. Use separate queues for each agent.
+7. **Integrate with a webhook**: Secure with HMAC, rate limit, replay protection. Return 202 immediately and process async.
 
-8. **Add observability early**: Log agent executions, latencies, token usage. Add Prometheus metrics for queue depths and latency histograms.
+8. **Choose a database**: Start with SQLite for simplicity, migrate to PostgreSQL when multi-instance support is needed. Use Alembic for migrations from day one.
+
+9. **Add observability early**: JSON structured logging, Prometheus metrics, health checks. These are invaluable for debugging and monitoring.
+
+10. **Add an evaluation framework early**: Build precision/recall/F1 benchmarking against annotated datasets. This lets you measure improvements objectively.
 
 ---
 
@@ -870,27 +950,61 @@ def _check_limit(key: str, window_seconds: int, max_events: int) -> bool:
 
 ---
 
-## Appendix C: Key File Locations Reference
+## Appendix C: Circuit Breaker State Machine
+
+Location: `reliability/circuit_breaker.py`.
+
+```
+CLOSED ───(fail_max failures)───▶ OPEN ───(reset_timeout expires)───▶ HALF_OPEN
+  ▲                                                                        │
+  └──────────────────────(success)─────────────────────────────────────────┘
+  ▲                                                                        │
+  └──────────────────────(failure, back to OPEN)───────────────────────────┘
+```
+
+- **CLOSED**: Normal operation. LLM calls proceed. Failure counter increments on each failure.
+- **OPEN**: LLM calls rejected immediately. `can_execute()` returns `False`. Resets to HALF_OPEN after `reset_timeout` seconds.
+- **HALF_OPEN**: Single probe request allowed. On success → back to CLOSED (reset counter). On failure → back to OPEN.
+
+Prometheus gauge `CIRCUIT_BREAKER_STATE`: 0=CLOSED, 1=HALF_OPEN, 2=OPEN.
+
+---
+
+## Appendix D: Key File Locations Reference
 
 | Component | File Path |
 |-----------|----------|
 | Webhook server (FastAPI app) | `src/prguard_ai/gh_client/webhook_server.py` |
-| Celery tasks | `src/prguard_ai/task_queue/celery_app.py` |
+| Celery app + tasks | `src/prguard_ai/task_queue/celery_app.py` |
+| Orchestrator (review_pr chain) | `src/prguard_ai/task_queue/orchestrator.py` |
 | Style agent | `src/prguard_ai/agents/style_agent.py` |
 | Logic agent | `src/prguard_ai/agents/logic_agent.py` |
 | Security agent | `src/prguard_ai/agents/security_agent.py` |
 | Arbitrator | `src/prguard_ai/agents/arbitrator_agent.py` |
+| Coordinator (dialogue loop) | `src/prguard_ai/agents/coordinator.py` |
 | Diff parser | `src/prguard_ai/analysis/diff_parser.py` |
 | AST parser | `src/prguard_ai/analysis/ast_parser.py` |
 | LLM client | `src/prguard_ai/llm/client.py` |
+| Circuit breaker | `src/prguard_ai/reliability/circuit_breaker.py` |
 | Scoring engine | `src/prguard_ai/confidence/scoring_engine.py` |
 | Settings | `src/prguard_ai/config/settings.py` |
 | GitHub client | `src/prguard_ai/gh_client/github_client.py` |
 | Rate limiter | `src/prguard_ai/security/rate_limiter.py` |
 | Budget manager | `src/prguard_ai/cost/budget_manager.py` |
-| Audit logging | `src/prguard_ai/observability/logging.py` |
-| Schemas | `src/prguard_ai/schemas/agent_output.py`, `pr_report.py` |
+| DB models (SQLAlchemy) | `src/prguard_ai/db/models.py` |
+| DB session (asyncpg) | `src/prguard_ai/db/session.py` |
+| Alembic migrations | `alembic/env.py` |
+| Repo cache | `src/prguard_ai/analysis/repo_cache.py` |
+| Health checks | `src/prguard_ai/observability/health.py` |
+| Prometheus metrics | `src/prguard_ai/observability/metrics.py` |
+| Structured logging | `src/prguard_ai/observability/structured_logging.py` |
+| Evaluation framework | `src/prguard_ai/evaluation/evaluator.py` |
+| Schemas | `src/prguard_ai/schemas/agent_output.py`, `pr_report.py`, `context.py` |
+| Redis client | `src/prguard_ai/task_queue/redis_client.py` |
+| Task registry | `src/prguard_ai/task_queue/task_registry.py` |
+| Flake8 config | `.flake8` |
+| Docker setup | `docker-compose.yml`, `Dockerfile` |
 
 ---
 
-*End of study guide.*
+*End of study guide. Last updated: 2026-07-07 — reflects all 15 phases of development (203 tests, 76% coverage, PostgreSQL + Alembic, circuit breaker, Prometheus metrics, structured logging, repo caching, health checks, evaluation framework, flake8 integration).*
