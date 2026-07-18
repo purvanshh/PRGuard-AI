@@ -11,6 +11,19 @@
   - `docker compose -f deploy/docker-compose.prod.yml up -d --build`.
   - Ensure environment variables are configured in `.env` or the compose file.
 
+- **Production (Kubernetes)**
+  - Build and push the API image: `docker build -t <registry>/prguard-ai:<tag> .`.
+  - Provision infrastructure from `terraform/` or attach to an existing EKS/GKE cluster.
+  - Create a values override with real secrets and image coordinates.
+  - Install with `helm upgrade --install prguard ./helm/prguard -f values.prod.yaml`.
+  - Confirm `/health/ready`, `/health/live`, and `/metrics` are reachable through the ingress.
+
+### Rollback
+
+- Roll back application code with `helm rollback prguard <revision>`.
+- Roll back a model or prompt canary by setting the relevant rollout percentage to `0`.
+- Keep database migrations backward-compatible for one release. If a migration must be reverted, stop workers first, run `alembic downgrade <revision>`, then redeploy the previous image.
+
 ### Debugging Failures
 
 - Check `/health`:
@@ -36,7 +49,7 @@ Workers are stateless. Idempotency keys and global concurrency control prevent d
 - **Docker compose**
   - Increase the `--concurrency` flag or run multiple worker containers.
 - **Kubernetes (recommended)**
-  - Use a `Deployment` for workers and an HPA based on queue depth or CPU.
+  - Use the Helm worker `Deployment` and HPA. CPU scaling is included by default; queue-depth scaling can be added with KEDA.
   - Ensure that Redis and the database are sized appropriately before scaling up.
 
 Always monitor:
@@ -55,4 +68,3 @@ Always monitor:
   3. Confirm `/health` reports `openai: configured` and webhook flows still succeed.
 
 Do not commit secrets to the repository. Use `.env.example` as a reference only.
-

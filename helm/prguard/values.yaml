@@ -1,0 +1,50 @@
+image:
+  repository: prguard-ai
+  tag: latest
+  pullPolicy: IfNotPresent
+
+api:
+  replicas: 2
+  port: 8000
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+worker:
+  replicas: 3
+  concurrency: 4
+  resources:
+    requests:
+      cpu: 500m
+      memory: 768Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+ingress:
+  enabled: false
+  className: nginx
+  host: prguard.example.com
+  tlsSecretName: ""
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+config:
+  PRGUARD_OFFLINE_MODE: "false"
+  LOG_LEVEL: "INFO"
+
+secret:
+  OPENAI_API_KEY: ""
+  GITHUB_TOKEN: ""
+  GITHUB_WEBHOOK_SECRET: ""
+  DATABASE_URL: ""
+  REDIS_URL: ""
+  ADMIN_TOKEN: ""
