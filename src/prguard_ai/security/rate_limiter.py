@@ -13,6 +13,8 @@ _REPO_MAX_EVENTS: Final[int] = 10
 
 _INSTALL_WINDOW_SECONDS: Final[int] = 24 * 60 * 60  # 1 day
 _INSTALL_MAX_EVENTS: Final[int] = 100
+_MODEL_WINDOW_SECONDS: Final[int] = 60
+_MODEL_MAX_EVENTS: Final[int] = 120
 
 
 def _check_limit(key: str, window_seconds: int, max_events: int) -> bool:
@@ -42,11 +44,46 @@ def check_repo_limit(repo_name: str) -> bool:
     return _check_limit(key, _REPO_WINDOW_SECONDS, _REPO_MAX_EVENTS)
 
 
+def check_repo_concurrency(repo_name: str, max_inflight: int = 5) -> bool:
+    """Return True if this repository has capacity for another in-flight review."""
+    key = f"prguard:concurrency:repo:{repo_name}"
+    try:
+        r = get_redis()
+        current = int(r.incr(key))
+        r.expire(key, 15 * 60)
+        if current > max_inflight:
+            r.decr(key)
+            return False
+        return True
+    except (RedisClientError, Exception):
+        return True
+
+
+def release_repo_concurrency(repo_name: str) -> None:
+    """Release one in-flight slot for a repository."""
+    try:
+        get_redis().decr(f"prguard:concurrency:repo:{repo_name}")
+    except (RedisClientError, Exception):
+        return None
+
+
+def check_model_limit(model: str, max_events: int = _MODEL_MAX_EVENTS) -> bool:
+    """Return True when a model-specific request rate is within limits."""
+    safe_model = model.replace("/", "_").replace(":", "_")
+    key = f"prguard:rl:model:{safe_model}"
+    return _check_limit(key, _MODEL_WINDOW_SECONDS, max_events)
+
+
 def check_installation_limit(installation_id: int) -> bool:
     """Return True if the installation is within its daily PR review limit."""
     key = f"prguard:rl:inst:{installation_id}"
     return _check_limit(key, _INSTALL_WINDOW_SECONDS, _INSTALL_MAX_EVENTS)
 
 
-__all__ = ["check_repo_limit", "check_installation_limit"]
-
+__all__ = [
+    "check_installation_limit",
+    "check_model_limit",
+    "check_repo_concurrency",
+    "check_repo_limit",
+    "release_repo_concurrency",
+]

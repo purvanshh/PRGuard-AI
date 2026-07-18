@@ -8,13 +8,16 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - REDIS_URL=${REDIS_URL:-redis://redis-data:6379/0}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis-broker:6379/0}
       - CHROMA_PERSIST_DIR=/app/.chroma
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/prguard
     ports:
       - "8000:8000"
     depends_on:
-      redis:
+      redis-data:
+        condition: service_healthy
+      redis-broker:
         condition: service_healthy
       db:
         condition: service_healthy
@@ -35,11 +38,14 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - REDIS_URL=${REDIS_URL:-redis://redis-data:6379/0}
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis-broker:6379/0}
       - CHROMA_PERSIST_DIR=/app/.chroma
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/prguard
     depends_on:
-      redis:
+      redis-data:
+        condition: service_healthy
+      redis-broker:
         condition: service_healthy
       db:
         condition: service_healthy
@@ -52,11 +58,25 @@ services:
       retries: 5
       start_period: 30s
 
-  redis:
+    deploy:
+      replicas: 2
+
+  redis-data:
     image: redis:7
-    container_name: prguard-redis
+    container_name: prguard-redis-data
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis-broker:
+    image: redis:7
+    container_name: prguard-redis-broker
+    ports:
+      - "6380:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s

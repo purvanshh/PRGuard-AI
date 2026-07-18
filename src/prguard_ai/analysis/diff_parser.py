@@ -176,6 +176,29 @@ def extract_changed_files(diff: str | Dict[str, List[DiffHunk]]) -> List[str]:
     return list(parsed.keys())
 
 
+def chunk_diff_by_file(diff_text: str, max_files_per_chunk: int = 100) -> List[str]:
+    """Split a large unified diff into file-bounded chunks."""
+    if max_files_per_chunk <= 0:
+        raise ValueError("max_files_per_chunk must be positive")
+
+    chunks: List[List[str]] = []
+    current_chunk: List[str] = []
+    files_in_chunk = 0
+
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git"):
+            if files_in_chunk >= max_files_per_chunk and current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = []
+                files_in_chunk = 0
+            files_in_chunk += 1
+        current_chunk.append(line)
+
+    if current_chunk:
+        chunks.append(current_chunk)
+    return ["\n".join(chunk) for chunk in chunks]
+
+
 def extract_hunks(file_diff: str | List[DiffHunk] | Dict[str, List[DiffHunk]]) -> Iterable[DiffHunk]:
     """
     Yield all hunks from the diff.
@@ -230,5 +253,5 @@ __all__ = [
     "extract_changed_files",
     "extract_hunks",
     "extract_context_lines",
+    "chunk_diff_by_file",
 ]
-
