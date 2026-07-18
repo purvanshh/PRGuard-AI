@@ -19,6 +19,7 @@ from prguard_ai.observability.tracing import get_tracer
 from prguard_ai.cost.budget_manager import add_usage, check_budget
 from prguard_ai.reliability.circuit_breaker import llm_breaker, CircuitBreakerError
 from prguard_ai.task_queue.redis_client import get_redis, RedisClientError
+from prguard_ai.llm.model_router import model_router, semantic_cache
 import redis
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,8 @@ def generate_analysis(
     max_tokens: int = 512,
     temperature: float = 0.0,
     pr_id: str | None = None,
+    agent: str = "unknown",
+    use_cache: bool = True,
 ) -> Tuple[str, Dict[str, Any]]:
     """
     Call the OpenAI API with retry and basic rate-limit handling.
@@ -198,6 +201,15 @@ def generate_analysis(
     """
     offline_mode = settings.prguard_offline_mode
     nvidia_key = settings.nvidia_api_key or settings.openai_api_key
+    route = model_router.route(agent, prompt)
+    if model == DEFAULT_MODEL:
+        model = route.model
+    max_tokens = min(max_tokens, route.max_tokens)
+
+    if use_cache:
+        cached = semantic_cache.get(f"{agent}:{prompt}")
+        if cached is not None:
+            return cached
 
     # Offline/test mode: when explicitly disabled or no API key, return a stub response.
     if offline_mode or not nvidia_key or "PYTEST_CURRENT_TEST" in os.environ:
@@ -213,8 +225,12 @@ def generate_analysis(
             "completion_tokens": 0,
             "total_tokens": 0,
             "pr_id": pr_id,
+            "agent": agent,
+            "route_complexity": route.complexity,
+            "cache_hit": False,
         }
         # Agents expect JSON; an empty list means "no issues".
+        semantic_cache.set(f"{agent}:{prompt}", "[]", meta)
         return "[]", meta
 
     if not settings.nvidia_api_key and settings.openai_api_key:
@@ -265,6 +281,9 @@ def generate_analysis(
                     "completion_tokens": usage.get("completion_tokens", 0),
                     "total_tokens": usage.get("total_tokens", 0),
                     "pr_id": pr_id,
+                    "agent": agent,
+                    "route_complexity": route.complexity,
+                    "cache_hit": False,
                 }
 
                 # Metrics and cost tracking.
@@ -282,7 +301,7 @@ def generate_analysis(
                         run_async(
                             log_llm_usage(
                                 pr_id=pr_id,
-                                agent="unknown",
+                                agent=agent,
                                 model=model,
                                 prompt_tokens=prompt_tokens,
                                 completion_tokens=completion_tokens,
@@ -293,7 +312,8 @@ def generate_analysis(
                         logger.warning("Failed to log LLM usage to PostgreSQL: %s", e)
                 if repo_name:
                     add_usage(repo_name, estimated_cost)
-                LLM_TOKENS_USED.labels(agent="unknown", model=model).inc(total_tokens)
+                LLM_TOKENS_USED.labels(agent=agent, model=model).inc(total_tokens)
+                semantic_cache.set(f"{agent}:{prompt}", message, meta)
                 return message, meta
             except CircuitBreakerError:
                 raise
@@ -371,4 +391,3 @@ def check_llm_health() -> str:
 
     _last_llm_health_check = now
     return _last_llm_health_status
-
