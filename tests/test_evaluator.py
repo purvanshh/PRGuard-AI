@@ -81,6 +81,7 @@ def test_evaluate_pr_no_expected_issues(monkeypatch):
     assert result["missed_issue"] == 0
     assert "f1" in result
     assert "confidence" in result
+    assert "agent_metrics" in result
 
 
 def test_evaluate_pr_perfect_match(monkeypatch):
@@ -112,6 +113,7 @@ def test_evaluate_pr_perfect_match(monkeypatch):
     assert result["precision"] == pytest.approx(1.0)
     assert result["recall"] == pytest.approx(1.0)
     assert result["f1"] == pytest.approx(1.0)
+    assert result["agent_metrics"]["security"]["true_positive"] == 1
 
 
 def test_evaluate_pr_all_fp(monkeypatch):
@@ -224,6 +226,30 @@ def test_run_evaluation_suite_directory(tmp_path, monkeypatch):
     assert len(results) == 3
     ids = {r["id"] for r in results}
     assert ids == {"c0", "c1", "c2"}
+
+
+def test_semantic_issue_match_handles_near_duplicates():
+    from prguard_ai.evaluation.evaluator import semantic_issue_match
+
+    detected = {"line": 10, "message": "Potential SQL injection via string-concatenated query", "severity": "high"}
+    expected = {"line": 11, "message": "String concatenated SQL query may allow injection", "severity": "high"}
+
+    assert semantic_issue_match(detected, expected) is True
+
+
+def test_summarize_evaluation_results(monkeypatch):
+    from prguard_ai.evaluation import evaluator
+
+    monkeypatch.setattr(evaluator, "analyze_style", lambda *a, **k: _make_agent_output("style"))
+    monkeypatch.setattr(evaluator, "analyze_logic", lambda *a, **k: _make_agent_output("logic"))
+    monkeypatch.setattr(evaluator, "analyze_security", lambda *a, **k: _make_agent_output("security"))
+
+    results = evaluator.run_evaluation_suite(Path(__file__).parent.parent / "src" / "prguard_ai" / "evaluation" / "dataset")
+    summary = evaluator.summarize_evaluation_results(results)
+
+    assert summary["cases"] >= 1
+    assert "overall" in summary
+    assert "per_agent" in summary
 
 
 def test_existing_dataset_file_is_valid_json():
