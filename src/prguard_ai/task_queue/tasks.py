@@ -10,6 +10,8 @@ from prguard_ai.task_queue.celery_app import celery_app
 from prguard_ai.gh_client.github_client import post_pr_comment, post_inline_comment, format_pr_review
 from prguard_ai.task_queue.task_registry import complete_pr_processing
 from prguard_ai.observability.metrics import DEAD_LETTERED_TASKS, TOTAL_PRS_PROCESSED, REVIEW_CONFIDENCE
+from prguard_ai.human_review import human_review_queue
+from prguard_ai.schemas.pr_report import PullRequestReport
 
 logger = logging.getLogger(__name__)
 _DLQ_KEY = "prguard:dlq"
@@ -66,6 +68,20 @@ def post_review(report_dict: dict, repo: str, pr_number: int) -> dict:
     sandbox_path = report_dict.pop("sandbox_path", None)
 
     try:
+        for issue in report_dict.get("issues", []):
+            if isinstance(issue, dict):
+                issue.setdefault("confidence_source", "inferred")
+        report_model = PullRequestReport.model_validate(report_dict)
+        if not human_review_queue.should_auto_post(report_model):
+            pending = human_review_queue.enqueue(
+                pr_id,
+                report_model,
+                reason="confidence_below_auto_post_threshold",
+            )
+            report_dict["human_review_status"] = "pending"
+            report_dict["human_review_id"] = pending.review_id
+            return report_dict
+
         comment_body = format_pr_review(report_dict)
         post_pr_comment(repo_full_name=repo, pr_number=pr_number, body=comment_body)
 

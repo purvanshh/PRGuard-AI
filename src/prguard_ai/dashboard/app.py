@@ -11,6 +11,7 @@ from fastapi.responses import HTMLResponse
 
 from prguard_ai.observability.logging import fetch_pr_logs
 from prguard_ai.evaluation.evaluator import evaluate_pr
+from prguard_ai.human_review import escalation_message, human_review_queue
 
 
 app = FastAPI(title="PRGuard AI Dashboard", version="0.1.0")
@@ -48,7 +49,58 @@ def _render_html(title: str, body: str) -> str:
 async def dashboard_index() -> str:
     body = "<h1>PRGuard AI Dashboard</h1>"
     body += "<p>Use <code>/review/&lt;pr_id&gt;</code> to inspect a specific pull request trace.</p>"
+    body += "<p><a href='/dashboard/pending'>Pending human reviews</a></p>"
     return _render_html("PRGuard AI Dashboard", body)
+
+
+@app.get("/dashboard/pending", response_class=HTMLResponse)
+async def pending_reviews() -> str:
+    body = "<h1>Pending Human Reviews</h1>"
+    pending = human_review_queue.list_pending()
+    if not pending:
+        body += "<p><em>No pending reviews.</em></p>"
+        return _render_html("Pending Reviews", body)
+    body += "<div class='card'><table><tr><th>PR</th><th>Confidence</th><th>Reason</th><th>Findings</th><th>Actions</th></tr>"
+    for item in pending:
+        body += "<tr>"
+        body += f"<td>{item.pr_id}</td>"
+        body += f"<td>{item.report.overall_confidence:.2f}</td>"
+        body += f"<td>{item.reason}</td>"
+        body += f"<td>{len(item.report.issues)}</td>"
+        body += (
+            f"<td><a href='/dashboard/reviews/{item.review_id}/approve'>approve</a> "
+            f"<a href='/dashboard/reviews/{item.review_id}/reject'>reject</a> "
+            f"<a href='/dashboard/reviews/{item.review_id}/escalate'>escalate</a></td>"
+        )
+        body += "</tr>"
+    body += "</table></div>"
+    return _render_html("Pending Reviews", body)
+
+
+@app.get("/dashboard/reviews/{review_id}/approve")
+async def approve_review(review_id: str) -> Dict[str, Any]:
+    pending = human_review_queue.decide(review_id, "approved")
+    return {"review_id": pending.review_id, "status": pending.status}
+
+
+@app.get("/dashboard/reviews/{review_id}/reject")
+async def reject_review(review_id: str) -> Dict[str, Any]:
+    pending = human_review_queue.decide(review_id, "rejected")
+    return {"review_id": pending.review_id, "status": pending.status}
+
+
+@app.get("/dashboard/reviews/{review_id}/override")
+async def override_review(review_id: str, message: str) -> Dict[str, Any]:
+    pending = human_review_queue.decide(review_id, "modified", override_message=message)
+    return {"review_id": pending.review_id, "status": pending.status, "message": message}
+
+
+@app.get("/dashboard/reviews/{review_id}/escalate")
+async def escalate_review(review_id: str) -> Dict[str, Any]:
+    pending = next((item for item in human_review_queue.list_pending() if item.review_id == review_id), None)
+    if pending is None:
+        raise HTTPException(status_code=404, detail="Review not pending")
+    return {"review_id": review_id, "message": escalation_message(pending)}
 
 
 @app.get("/review/{pr_id}", response_class=HTMLResponse)
@@ -289,4 +341,3 @@ async def dataset_run(sample_name: str) -> str:
 
 
 __all__ = ["app"]
-

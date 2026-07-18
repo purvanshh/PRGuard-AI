@@ -39,8 +39,23 @@ class LLMUsage(Base):
     estimated_cost_usd = Column(Float, nullable=False)
 
 
+class HumanFeedback(Base):
+    """Human accept/reject/modify decisions linked to a PR finding."""
+
+    __tablename__ = "human_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pr_id = Column(String(255), nullable=False, index=True)
+    review_id = Column(String(255), nullable=False, index=True)
+    finding_key = Column(String(255), nullable=True)
+    decision = Column(String(50), nullable=False)
+    original_message = Column(Text, nullable=True)
+    override_message = Column(Text, nullable=True)
+    created_at = Column(Float, nullable=False)
+
+
 # ORM model aliases to satisfy system terminology requirements
 AuditLog = AgentLog
 TokenUsage = LLMUsage
 
-__all__ = ["Base", "AgentLog", "LLMUsage", "AuditLog", "TokenUsage"]
+__all__ = ["Base", "AgentLog", "LLMUsage", "HumanFeedback", "AuditLog", "TokenUsage"]
