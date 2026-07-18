@@ -41,6 +41,12 @@ AGENT_EXECUTION_TIME = Histogram(
     ["agent"],
 )
 
+END_TO_END_REVIEW_LATENCY = Histogram(
+    "prguard_review_latency_seconds",
+    "End-to-end latency from webhook receipt to final review",
+    buckets=(30, 60, 120, 300, 600, 900, 1800),
+)
+
 # ---------------------------------------------------------------------------
 # Summaries
 # ---------------------------------------------------------------------------
@@ -62,6 +68,12 @@ CIRCUIT_BREAKER_STATE = Gauge(
 TOKEN_BUDGET_REMAINING = Gauge(
     "prguard_token_budget_remaining",
     "Estimated remaining token budget for the current day",
+)
+
+QUEUE_DEPTH = Gauge(
+    "prguard_queue_depth",
+    "Current Celery queue depth by queue name",
+    ["queue"],
 )
 
 
@@ -91,16 +103,30 @@ def record_token_budget(remaining: float) -> None:
     TOKEN_BUDGET_REMAINING.set(remaining)
 
 
+def record_queue_depth(queue: str, depth: int) -> None:
+    """Set current queue depth for a Celery queue."""
+    QUEUE_DEPTH.labels(queue=queue).set(depth)
+
+
+def record_review_latency(seconds: float) -> None:
+    """Observe end-to-end review latency."""
+    END_TO_END_REVIEW_LATENCY.observe(seconds)
+
+
 __all__ = [
     "AGENT_ERRORS_TOTAL",
     "AGENT_EXECUTION_TIME",
     "CIRCUIT_BREAKER_STATE",
     "DEAD_LETTERED_TASKS",
+    "END_TO_END_REVIEW_LATENCY",
     "LLM_TOKENS_USED",
+    "QUEUE_DEPTH",
     "REVIEW_CONFIDENCE",
     "TOKEN_BUDGET_REMAINING",
     "TOTAL_PRS_PROCESSED",
     "record_circuit_state",
     "record_agent_error",
+    "record_queue_depth",
+    "record_review_latency",
     "record_token_budget",
 ]

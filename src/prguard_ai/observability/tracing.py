@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextvars import ContextVar
 
 from opentelemetry import trace
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
@@ -16,6 +17,27 @@ def _is_truthy(value: str | None) -> bool:
 
 
 from prguard_ai.config.settings import settings
+
+_correlation_id: ContextVar[str | None] = ContextVar("correlation_id", default=None)
+
+
+def set_correlation_id(value: str | None) -> None:
+    """Set the current request/task correlation ID."""
+    _correlation_id.set(value)
+
+
+def get_correlation_id() -> str | None:
+    """Return the current request/task correlation ID, if any."""
+    return _correlation_id.get()
+
+
+def inject_trace_context(headers: dict[str, str] | None = None) -> dict[str, str]:
+    """Inject the current correlation ID into task/message headers."""
+    result = dict(headers or {})
+    cid = get_correlation_id()
+    if cid:
+        result["correlation_id"] = cid
+    return result
 
 
 def configure_tracing(service_name: str) -> None:
@@ -43,4 +65,10 @@ def get_tracer(name: str | None = None):
     return trace.get_tracer(name or "prguard")
 
 
-__all__ = ["configure_tracing", "get_tracer"]
+__all__ = [
+    "configure_tracing",
+    "get_correlation_id",
+    "get_tracer",
+    "inject_trace_context",
+    "set_correlation_id",
+]

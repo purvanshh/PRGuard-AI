@@ -15,6 +15,7 @@ class JsonLogFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
         import traceback
         from opentelemetry import trace
+        from prguard_ai.observability.tracing import get_correlation_id
 
         # Dynamically fetch OpenTelemetry trace context
         trace_id = None
@@ -38,6 +39,7 @@ class JsonLogFormatter(logging.Formatter):
             "message": record.getMessage(),
             "trace_id": trace_id,
             "span_id": span_id,
+            "correlation_id": getattr(record, "correlation_id", None) or get_correlation_id(),
             "extra": {},
         }
 
@@ -75,6 +77,7 @@ class JsonLogFormatter(logging.Formatter):
                 "event_type",
                 "trace_id",
                 "span_id",
+                "correlation_id",
             }:
                 payload["extra"][key] = value
 
@@ -93,4 +96,3 @@ def configure_structured_logging(level: int = logging.INFO) -> None:
 
 
 __all__ = ["configure_structured_logging", "JsonLogFormatter"]
-

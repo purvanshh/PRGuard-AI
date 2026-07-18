@@ -1,0 +1,24 @@
+groups:
+  - name: prguard.rules
+    rules:
+      - alert: PRGuardCircuitBreakerOpen
+        expr: prguard_circuit_breaker_state == 2
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PRGuard LLM circuit breaker is open"
+      - alert: PRGuardQueueDepthHigh
+        expr: max(prguard_queue_depth) > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "PRGuard queue depth is above 100"
+      - alert: PRGuardReviewLatencyHigh
+        expr: histogram_quantile(0.95, sum(rate(prguard_review_latency_seconds_bucket[5m])) by (le)) > 600
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PRGuard p95 review latency is above 10 minutes"
