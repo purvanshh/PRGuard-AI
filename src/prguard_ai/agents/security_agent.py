@@ -46,8 +46,8 @@ def _load_prompt() -> str:
     prompt, _version = load_prompt(
         "security",
         fallback=(
-        "You are a code review assistant focusing on SECURITY. "
-        "Respond with a JSON array of issues."
+            "You are a code review assistant focusing on SECURITY. "
+            "Respond with a JSON array of issues."
         ),
     )
     return prompt

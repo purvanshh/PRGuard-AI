@@ -66,8 +66,8 @@ def _load_prompt() -> str:
     prompt, _version = load_prompt(
         "style",
         fallback=(
-        "You are a code review assistant focusing exclusively on STYLE and CONSISTENCY. "
-        "Respond with a JSON array of issues."
+            "You are a code review assistant focusing exclusively on STYLE and CONSISTENCY. "
+            "Respond with a JSON array of issues."
         ),
     )
     return prompt

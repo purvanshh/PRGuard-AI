@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+import textwrap
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -93,6 +94,7 @@ def _parse_inline_list(raw: str) -> list[str]:
 
 def parse_policy_text(text: str) -> PolicyConfig:
     """Parse a constrained YAML subset used by `.prguard.yml`."""
+    text = textwrap.dedent(text)
     data: dict[str, Any] = {}
     current_key: str | None = None
 
