@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -16,6 +17,17 @@ from typing import Any, Dict
 from prguard_ai.config.settings import settings
 
 logger = logging.getLogger(__name__)
+_REPO_FULL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+def validate_repo_full_name(repo_full_name: str) -> str:
+    """Validate an owner/repo name before deriving cache paths."""
+    if not _REPO_FULL_NAME_PATTERN.fullmatch(repo_full_name):
+        raise ValueError("Invalid repository full name.")
+    owner, repo = repo_full_name.split("/", 1)
+    if owner in {".", ".."} or repo in {".", ".."}:
+        raise ValueError("Invalid repository full name.")
+    return repo_full_name
 
 
 def _get_dir_size(path: Path) -> int:
@@ -103,7 +115,8 @@ def get_cached_repo(repo_full_name: str, repo_url: str) -> Path:
     cache_dir = Path(settings.repo_cache_dir).resolve()
     cache_dir.mkdir(parents=True, exist_ok=True)
 
-    safe_repo_name = repo_full_name.replace("/", "__").replace("..", "_")
+    validate_repo_full_name(repo_full_name)
+    safe_repo_name = repo_full_name.replace("/", "__")
     repo_dir = cache_dir / safe_repo_name
 
     env = os.environ.copy()
@@ -135,7 +148,7 @@ def get_cached_repo(repo_full_name: str, repo_url: str) -> Path:
             shutil.rmtree(repo_dir, ignore_errors=True)
             # Re-clone
             subprocess.run(
-                ["git", "clone", "--depth", "1", repo_url, str(repo_dir)],
+                ["git", "clone", "--config", "core.hooksPath=/dev/null", "--depth", "1", repo_url, str(repo_dir)],
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -147,7 +160,7 @@ def get_cached_repo(repo_full_name: str, repo_url: str) -> Path:
         shutil.rmtree(repo_dir, ignore_errors=True)
         try:
             subprocess.run(
-                ["git", "clone", "--depth", "1", repo_url, str(repo_dir)],
+                ["git", "clone", "--config", "core.hooksPath=/dev/null", "--depth", "1", repo_url, str(repo_dir)],
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -176,4 +189,4 @@ def get_cache_stats() -> Dict[str, Any]:
     }
 
 
-__all__ = ["get_cached_repo", "evict_lru_cache", "get_cache_stats"]
+__all__ = ["get_cached_repo", "evict_lru_cache", "get_cache_stats", "validate_repo_full_name"]

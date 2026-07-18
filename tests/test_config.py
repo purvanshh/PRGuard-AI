@@ -11,7 +11,7 @@ def test_settings_validation_and_aliases():
     assert settings.max_files_per_pr == 50
     assert settings.global_concurrency_limit == 5
     assert settings.processing_ttl_seconds == 900
-    assert settings.admin_token == "admin-secret-token"
+    assert len(settings.admin_token) >= 32
 
 
 def test_config_endpoint_unauthorized():
@@ -23,7 +23,7 @@ def test_config_endpoint_unauthorized():
 
 
 def test_config_endpoint_success():
-    response = client.get("/config", headers={"Authorization": "Bearer admin-secret-token"})
+    response = client.get("/config", headers={"Authorization": f"Bearer {settings.admin_token}"})
     assert response.status_code == 200
     data = response.json()
 

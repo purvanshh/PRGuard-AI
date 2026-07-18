@@ -14,6 +14,7 @@ from github import Github
 
 from prguard_ai.config.settings import settings
 from prguard_ai.gh_client.app_auth import get_installation_token
+from prguard_ai.security.redaction import redact_secrets
 
 logger = logging.getLogger(__name__)
 PRGUARD_REVIEW_MARKER = "<!-- prguard-ai-review -->"
@@ -104,9 +105,10 @@ def format_pr_review(report: dict) -> str:
             lines.append("_No issues detected._")
         else:
             for issue in issues:
+                message = redact_secrets(str(issue.get("message", "")))
                 lines.append(
                     f"- `{issue.get('severity', '').upper()}` "
-                    f"(line {issue.get('line')}): {issue.get('message')}"
+                    f"(line {issue.get('line')}): {message}"
                 )
         lines.append("")
 
@@ -168,9 +170,9 @@ def post_pr_comment(
         if _is_same_review(existing.body or "", body):
             logger.info("Skipping duplicate PR comment for %s#%s", repo_full_name, pr_number)
             return
-        existing.edit(marked_body)
+        existing.edit(redact_secrets(marked_body))
         return
-    pr.create_issue_comment(marked_body)
+    pr.create_issue_comment(redact_secrets(marked_body))
 
 
 def post_inline_comment(
@@ -208,7 +210,7 @@ def post_inline_comment(
         path,
         line,
     )
-    pr.create_review_comment(body, commit_id, path, line)
+    pr.create_review_comment(redact_secrets(body), commit_id, path, line)
 
 
 __all__ = ["get_pr_diff", "post_pr_comment", "format_pr_review", "post_inline_comment"]

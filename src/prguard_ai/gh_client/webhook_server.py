@@ -11,6 +11,7 @@ import time
 from typing import Any, Dict, List
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
+from pydantic import ValidationError
 
 from prguard_ai.config.settings import settings
 from prguard_ai.analysis.repo_indexer import initialize_repo_index
@@ -49,6 +50,7 @@ from prguard_ai.task_queue.task_registry import (
 from prguard_ai.security.rate_limiter import check_installation_limit, check_repo_limit
 from prguard_ai.task_queue.redis_client import get_redis
 from prguard_ai.schemas.agent_output import AgentOutput
+from prguard_ai.schemas.webhook import WebhookPayload
 
 logger = logging.getLogger(__name__)
 _TRACER = get_tracer("webhook")
@@ -93,6 +95,17 @@ def _validate_repo_url_from_payload(payload: dict) -> str:
             detail={"error": "missing_repo_url", "reason": "Clone URL missing from webhook payload."},
         )
     return repo_url
+
+
+def validate_webhook_payload(payload: dict) -> WebhookPayload:
+    """Validate raw webhook JSON with strict required fields."""
+    try:
+        return WebhookPayload.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": "invalid_webhook_payload", "reason": exc.errors()},
+        ) from exc
 
 
 def _validate_delivery_id(raw: object) -> str:
@@ -249,15 +262,16 @@ async def github_webhook(
     if x_github_event != "pull_request":
         return {"status": "ignored", "reason": f"event {x_github_event} not supported"}
 
-    action = payload.get("action")
+    webhook_payload = validate_webhook_payload(payload)
+    action = webhook_payload.action
     if action not in {"opened", "synchronize", "ready_for_review"}:
         return {"status": "ignored", "reason": f"action {action} not supported"}
 
-    repo = _validate_repo_full_name(payload["repository"]["full_name"])
-    pr_number = _validate_pr_number(payload["number"])
+    repo = _validate_repo_full_name(webhook_payload.repository.full_name)
+    pr_number = _validate_pr_number(webhook_payload.number)
     pr_id = f"{repo}#{pr_number}"
     try:
-        installation_id = int(payload.get("installation", {}).get("id", 0))
+        installation_id = int(webhook_payload.installation.id if webhook_payload.installation else 0)
     except (TypeError, ValueError):
         installation_id = 0
 

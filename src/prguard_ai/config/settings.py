@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from pydantic_settings import BaseSettings
 from pydantic import Field, model_validator
 
@@ -45,7 +46,7 @@ class Settings(BaseSettings):
     daily_limit_usd: float = Field(5.0, validation_alias="DAILY_LIMIT_USD")
     max_tokens_per_request: int = Field(2048, validation_alias="MAX_TOKENS_PER_REQUEST")
     max_tokens_per_pr: int = Field(8000, validation_alias="MAX_TOKENS_PER_PR")
-    admin_token: str = Field("admin-secret-token", validation_alias="ADMIN_TOKEN")
+    admin_token: str = Field(default_factory=lambda: secrets.token_urlsafe(32), validation_alias="ADMIN_TOKEN")
 
     model_config = {"extra": "ignore", "env_file": ".env"}
 
@@ -65,6 +66,5 @@ class Settings(BaseSettings):
 settings = Settings()
 
 __all__ = ["settings", "Settings"]
-
 
 
