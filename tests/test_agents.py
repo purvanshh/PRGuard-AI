@@ -26,18 +26,24 @@ def test_style_agent_runs():
     output = analyze_style(DIFF)
     assert output.agent == "style"
     assert 0.0 <= output.confidence <= 1.0
+    assert output.reasoning_trace
+    assert output.tool_calls
 
 
 def test_logic_agent_runs():
     output = analyze_logic(DIFF)
     assert output.agent == "logic"
     assert 0.0 <= output.confidence <= 1.0
+    assert output.reasoning_trace
+    assert output.tool_calls
 
 
 def test_security_agent_runs():
     output = analyze_security(DIFF)
     assert output.agent == "security"
     assert 0.0 <= output.confidence <= 1.0
+    assert output.reasoning_trace
+    assert output.tool_calls
 
 
 def test_logic_agent_confidence_tracks_issue_strength():

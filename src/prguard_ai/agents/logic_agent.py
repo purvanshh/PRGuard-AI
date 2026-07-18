@@ -6,8 +6,10 @@ import json
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
+from prguard_ai.agents.base_agent import BaseAgent
+from prguard_ai.agents.tools.schemas import ToolInvocation
 from prguard_ai.analysis.ast_parser import AstSummary, detect_language, summarize_source
 from prguard_ai.analysis.diff_parser import DiffHunk, extract_context_lines, parse_diff
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
@@ -127,85 +129,115 @@ def _parse_llm_issues(raw: str) -> List[Issue]:
     return out
 
 
-def analyze_logic(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -> AgentOutput:
-    """
-    Detect logical issues, edge cases, and potential runtime errors in the diff.
-    """
-    repo_metadata = repo_metadata or {}
-    pr_id = repo_metadata.get("pr_id")
-    sandbox_path = repo_metadata.get("sandbox_path")
-    parsed = parse_diff(diff_text)
+class LogicAgent(BaseAgent):
+    agent_name = "logic"
+    empty_confidence = 0.45
 
-    files = list(parsed.keys())[:MAX_FILES_PER_PR]
-    file_hunks: List[DiffHunk] = []
-    for f in files:
-        file_hunks.extend(parsed[f])
-
-    # Collect textual context around the first few hunks.
-    context_snippets: List[str] = []
-    for h in file_hunks[:5]:
-        if h.lines:
-            first_add = next((l for l in h.lines if l.new_lineno is not None), None)
-            if first_add is not None and first_add.new_lineno is not None:
-                ctx_path = _resolve_context_file_path(h.file_path, sandbox_path)
-                ctx = extract_context_lines(ctx_path, first_add.new_lineno, window=10)
-                if ctx:
-                    context_snippets.append(
-                        f"# {h.file_path}:{first_add.new_lineno}\n" + "\n".join(ctx[:40])
-                    )
-
-    ast_summary = _build_ast_summary_for_hunks(file_hunks)
-
-    # Simple static checks for TODOs and obvious runtime hazards.
-    issues: List[Issue] = []
-    for h in file_hunks:
-        for line in h.lines:
-            if line.line_type != "add":
-                continue
-            text = line.content
-            if "TODO" in text:
-                issues.append(
-                    Issue(
-                        line=line.new_lineno or 1,
-                        severity="low",
-                        message="TODO present in newly added code.",
-                        evidence=text[:200],
-                        confidence_source="inferred",
-                        file_path=h.file_path,
-                    )
+    def build_tool_plan(self, diff_text: str) -> Sequence[ToolInvocation]:
+        parsed = parse_diff(diff_text)
+        files = list(parsed.keys())[:2]
+        plan: List[ToolInvocation] = [
+            ToolInvocation(
+                tool="search_codebase",
+                args={"query": "TODO", "limit": 5},
+                rationale="Check whether the modified area is already marked as risky or incomplete elsewhere.",
+            )
+        ]
+        for file_path in files:
+            plan.append(
+                ToolInvocation(
+                    tool="get_type_info",
+                    args={"path": file_path},
+                    rationale=f"Inspect function signatures and return annotations in {file_path}.",
                 )
-            if "except:" in text:
-                issues.append(
-                    Issue(
-                        line=line.new_lineno or 1,
-                        severity="medium",
-                        message="Bare except detected; this can hide runtime errors.",
-                        evidence=text[:200],
-                        confidence_source="rule_based",
-                        file_path=h.file_path,
-                    )
+            )
+        if files:
+            plan.append(
+                ToolInvocation(
+                    tool="run_test",
+                    args={"target": "tests"},
+                    rationale="See whether the repository test suite exposes impacted logic failures.",
                 )
+            )
+        return plan
 
-    # LLM reasoning.
-    llm_issues: List[Issue] = []
-    llm_skipped = False
-    if diff_text:
-        from prguard_ai.reliability.circuit_breaker import CircuitBreakerError
-        from prguard_ai.llm.client import TokenBudgetExceededError
-        try:
-            prompt = _build_llm_input(diff_text, context_snippets, ast_summary)
-            text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
-            llm_issues = _parse_llm_issues(text)
-        except (CircuitBreakerError, TokenBudgetExceededError) as exc:
-            logger.warning("Logic agent LLM skipped (circuit breaker open or budget exceeded) for PR %s: %s", pr_id, exc)
-            llm_skipped = True
+    def synthesize_issues(self, diff_text: str, tool_outputs: Dict[str, Any]) -> List[Issue]:
+        parsed = parse_diff(diff_text)
+        sandbox_path = self.repo_metadata.get("sandbox_path")
+        pr_id = self.repo_metadata.get("pr_id")
 
-    all_issues = issues + llm_issues
-    confidence = estimate_issue_confidence(all_issues, empty_confidence=0.45)
-    return AgentOutput(agent="logic", confidence=confidence, issues=all_issues, llm_skipped=llm_skipped)
+        files = list(parsed.keys())[:MAX_FILES_PER_PR]
+        file_hunks: List[DiffHunk] = []
+        for filename in files:
+            file_hunks.extend(parsed[filename])
 
+        context_snippets: List[str] = []
+        for h in file_hunks[:5]:
+            if h.lines:
+                first_add = next((l for l in h.lines if l.new_lineno is not None), None)
+                if first_add is not None and first_add.new_lineno is not None:
+                    ctx_path = _resolve_context_file_path(h.file_path, sandbox_path)
+                    ctx = extract_context_lines(ctx_path, first_add.new_lineno, window=10)
+                    if ctx:
+                        context_snippets.append(f"# {h.file_path}:{first_add.new_lineno}\n" + "\n".join(ctx[:40]))
 
-class LogicAgent:
+        ast_summary = _build_ast_summary_for_hunks(file_hunks)
+        type_info = tool_outputs.get("get_type_info")
+        if isinstance(type_info, dict) and type_info.get("functions"):
+            context_snippets.append("Type info:\n" + json.dumps(type_info["functions"][:5], indent=2))
+        test_output = tool_outputs.get("run_test")
+        if isinstance(test_output, dict) and test_output.get("returncode", 0) != 0:
+            context_snippets.append("Test failures:\n" + (test_output.get("stdout") or test_output.get("stderr") or "")[:500])
+
+        issues: List[Issue] = []
+        for h in file_hunks:
+            for line in h.lines:
+                if line.line_type != "add":
+                    continue
+                text = line.content
+                if "TODO" in text:
+                    issues.append(
+                        Issue(
+                            line=line.new_lineno or 1,
+                            severity="low",
+                            message="TODO present in newly added code.",
+                            evidence=text[:200],
+                            confidence_source="inferred",
+                            file_path=h.file_path,
+                        )
+                    )
+                if "except:" in text:
+                    issues.append(
+                        Issue(
+                            line=line.new_lineno or 1,
+                            severity="medium",
+                            message="Bare except detected; this can hide runtime errors.",
+                            evidence=text[:200],
+                            confidence_source="rule_based",
+                            file_path=h.file_path,
+                        )
+                    )
+
+        llm_issues: List[Issue] = []
+        if diff_text:
+            from prguard_ai.reliability.circuit_breaker import CircuitBreakerError
+            from prguard_ai.llm.client import TokenBudgetExceededError
+
+            try:
+                prompt = _build_llm_input(diff_text, context_snippets, ast_summary)
+                text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
+                llm_issues = _parse_llm_issues(text)
+                self.reasoning_trace.append("logic: synthesized LLM findings after AST and test/tool inspection")
+            except (CircuitBreakerError, TokenBudgetExceededError) as exc:
+                logger.warning("Logic agent LLM skipped (circuit breaker open or budget exceeded) for PR %s: %s", pr_id, exc)
+                self.llm_skipped = True
+                self.reasoning_trace.append("logic: skipped LLM synthesis due to circuit breaker or budget limits")
+
+        return issues + llm_issues
+
+    def score_confidence(self, issues: List[Issue]) -> float:
+        return estimate_issue_confidence(issues, empty_confidence=self.empty_confidence)
+
     @staticmethod
     def refine(initial_output: AgentOutput, context: ReviewContext) -> tuple[str, AgentOutput]:
         """Refine logic agent issues and generate a dialogue message based on context."""
@@ -222,13 +254,13 @@ class LogicAgent:
                 "Respond with a JSON object containing message and issues."
             )
 
-        own_findings_str = json.dumps([issue.dict() for issue in initial_output.issues], indent=2)
+        own_findings_str = json.dumps([issue.model_dump() for issue in initial_output.issues], indent=2)
 
         other_findings_list = []
         for name, output in context.agent_outputs.items():
             if name != "logic":
                 other_findings_list.append(
-                    f"Agent: {name}\nFindings:\n" + json.dumps([issue.dict() for issue in output.issues], indent=2)
+                    f"Agent: {name}\nFindings:\n" + json.dumps([issue.model_dump() for issue in output.issues], indent=2)
                 )
         other_findings_str = "\n\n".join(other_findings_list)
 
@@ -308,6 +340,11 @@ class LogicAgent:
             message = "LLM refinement skipped due to circuit breaker or budget constraints."
 
         return message, refined_output
+
+
+def analyze_logic(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -> AgentOutput:
+    """Detect logical issues with tool-grounded context collection."""
+    return LogicAgent(repo_metadata).run_react_loop(diff_text)
 
 
 __all__ = ["analyze_logic", "LogicAgent"]

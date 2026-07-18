@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
+from prguard_ai.agents.base_agent import BaseAgent
+from prguard_ai.agents.tools.schemas import ToolInvocation
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
 from prguard_ai.analysis.diff_parser import DiffHunk, parse_diff
 from prguard_ai.llm.client import extract_json_from_llm_response, generate_analysis
@@ -80,80 +82,122 @@ def _parse_llm_issues(raw: str) -> List[Issue]:
     return out
 
 
-def analyze_security(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -> AgentOutput:
-    """
-    Detect security vulnerabilities using both rule-based checks and LLM reasoning.
-    """
-    repo_metadata = repo_metadata or {}
-    pr_id = repo_metadata.get("pr_id")
-    parsed = parse_diff(diff_text)
+class SecurityAgent(BaseAgent):
+    agent_name = "security"
+    empty_confidence = 0.55
 
-    files = list(parsed.keys())[:MAX_FILES_PER_PR]
-    file_hunks: List[DiffHunk] = []
-    for f in files:
-        file_hunks.extend(parsed[f])
-
-    issues: List[Issue] = []
-    for h in file_hunks:
-        for line in h.lines:
-            if line.line_type != "add":
-                continue
-            text = line.content
-            lineno = line.new_lineno or 1
-
-            if detect_eval_usage(text):
-                issues.append(
-                    Issue(
-                        line=lineno,
-                        severity="high",
-                        message="Use of eval/exec detected; this is often unsafe.",
-                        evidence=text[:200],
-                        confidence_source="rule_based",
-                        file_path=h.file_path,
-                    )
+    def build_tool_plan(self, diff_text: str) -> Sequence[ToolInvocation]:
+        parsed = parse_diff(diff_text)
+        files = list(parsed.keys())[:2]
+        plan: List[ToolInvocation] = [
+            ToolInvocation(
+                tool="dependency_scan",
+                args={},
+                rationale="Inspect dependency manifests for risky patterns or pinned vulnerabilities.",
+            )
+        ]
+        if files:
+            plan.append(
+                ToolInvocation(
+                    tool="git_blame",
+                    args={"path": files[0], "line": 1},
+                    rationale=f"Check ownership history of the primary changed file {files[0]}.",
                 )
-            if detect_sql_injection(text):
-                issues.append(
-                    Issue(
-                        line=lineno,
-                        severity="high",
-                        message="Potential SQL injection pattern (string-concatenated query).",
-                        evidence=text[:200],
-                        confidence_source="rule_based",
-                        file_path=h.file_path,
-                    )
+            )
+            plan.append(
+                ToolInvocation(
+                    tool="search_codebase",
+                    args={"query": "token", "limit": 5},
+                    rationale="Search for secret-handling patterns elsewhere in the repository.",
                 )
-            if detect_hardcoded_secrets(text):
-                issues.append(
-                    Issue(
-                        line=lineno,
-                        severity="high",
-                        message="Possible hardcoded secret or API key.",
-                        evidence=text[:200],
-                        confidence_source="rule_based",
-                        file_path=h.file_path,
+            )
+        return plan
+
+    def synthesize_issues(self, diff_text: str, tool_outputs: Dict[str, Any]) -> List[Issue]:
+        pr_id = self.repo_metadata.get("pr_id")
+        parsed = parse_diff(diff_text)
+
+        files = list(parsed.keys())[:MAX_FILES_PER_PR]
+        file_hunks: List[DiffHunk] = []
+        for filename in files:
+            file_hunks.extend(parsed[filename])
+
+        issues: List[Issue] = []
+        for h in file_hunks:
+            for line in h.lines:
+                if line.line_type != "add":
+                    continue
+                text = line.content
+                lineno = line.new_lineno or 1
+
+                if detect_eval_usage(text):
+                    issues.append(
+                        Issue(
+                            line=lineno,
+                            severity="high",
+                            message="Use of eval/exec detected; this is often unsafe.",
+                            evidence=text[:200],
+                            confidence_source="rule_based",
+                            file_path=h.file_path,
+                        )
                     )
+                if detect_sql_injection(text):
+                    issues.append(
+                        Issue(
+                            line=lineno,
+                            severity="high",
+                            message="Potential SQL injection pattern (string-concatenated query).",
+                            evidence=text[:200],
+                            confidence_source="rule_based",
+                            file_path=h.file_path,
+                        )
+                    )
+                if detect_hardcoded_secrets(text):
+                    issues.append(
+                        Issue(
+                            line=lineno,
+                            severity="high",
+                            message="Possible hardcoded secret or API key.",
+                            evidence=text[:200],
+                            confidence_source="rule_based",
+                            file_path=h.file_path,
+                        )
+                    )
+
+        dep_scan = tool_outputs.get("dependency_scan") or {}
+        for suspicious in dep_scan.get("suspicious", []):
+            issues.append(
+                Issue(
+                    line=1,
+                    severity="medium",
+                    message=f"Dependency manifest contains risky token `{suspicious.get('token')}`.",
+                    evidence=suspicious.get("path", ""),
+                    confidence_source="inferred",
+                    file_path=suspicious.get("path"),
                 )
+            )
 
-    llm_issues: List[Issue] = []
-    llm_skipped = False
-    if diff_text:
-        from prguard_ai.reliability.circuit_breaker import CircuitBreakerError
-        from prguard_ai.llm.client import TokenBudgetExceededError
-        try:
-            prompt = _load_prompt() + "\n\n--- Diff ---\n" + diff_text
-            text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
-            llm_issues = _parse_llm_issues(text)
-        except (CircuitBreakerError, TokenBudgetExceededError) as exc:
-            logger.warning("Security agent LLM skipped (circuit breaker open or budget exceeded) for PR %s: %s", pr_id, exc)
-            llm_skipped = True
+        llm_issues: List[Issue] = []
+        if diff_text:
+            from prguard_ai.reliability.circuit_breaker import CircuitBreakerError
+            from prguard_ai.llm.client import TokenBudgetExceededError
 
-    all_issues = issues + llm_issues
-    confidence = estimate_issue_confidence(all_issues, empty_confidence=0.55)
-    return AgentOutput(agent="security", confidence=confidence, issues=all_issues, llm_skipped=llm_skipped)
+            try:
+                extra_context = json.dumps(tool_outputs, indent=2)[:2000]
+                prompt = _load_prompt() + "\n\n--- Diff ---\n" + diff_text + "\n\n--- Tool context ---\n" + extra_context
+                text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
+                llm_issues = _parse_llm_issues(text)
+                self.reasoning_trace.append("security: synthesized LLM findings after dependency and history checks")
+            except (CircuitBreakerError, TokenBudgetExceededError) as exc:
+                logger.warning("Security agent LLM skipped (circuit breaker open or budget exceeded) for PR %s: %s", pr_id, exc)
+                self.llm_skipped = True
+                self.reasoning_trace.append("security: skipped LLM synthesis due to circuit breaker or budget limits")
 
+        return issues + llm_issues
 
-class SecurityAgent:
+    def score_confidence(self, issues: List[Issue]) -> float:
+        return estimate_issue_confidence(issues, empty_confidence=self.empty_confidence)
+
     @staticmethod
     def refine(initial_output: AgentOutput, context: ReviewContext) -> tuple[str, AgentOutput]:
         """Refine security agent issues and generate a dialogue message based on context."""
@@ -170,13 +214,13 @@ class SecurityAgent:
                 "Respond with a JSON object containing message and issues."
             )
 
-        own_findings_str = json.dumps([issue.dict() for issue in initial_output.issues], indent=2)
+        own_findings_str = json.dumps([issue.model_dump() for issue in initial_output.issues], indent=2)
 
         other_findings_list = []
         for name, output in context.agent_outputs.items():
             if name != "security":
                 other_findings_list.append(
-                    f"Agent: {name}\nFindings:\n" + json.dumps([issue.dict() for issue in output.issues], indent=2)
+                    f"Agent: {name}\nFindings:\n" + json.dumps([issue.model_dump() for issue in output.issues], indent=2)
                 )
         other_findings_str = "\n\n".join(other_findings_list)
 
@@ -256,6 +300,11 @@ class SecurityAgent:
             message = "LLM refinement skipped due to circuit breaker or budget constraints."
 
         return message, refined_output
+
+
+def analyze_security(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -> AgentOutput:
+    """Detect security issues with local tool support and LLM synthesis."""
+    return SecurityAgent(repo_metadata).run_react_loop(diff_text)
 
 
 __all__ = [

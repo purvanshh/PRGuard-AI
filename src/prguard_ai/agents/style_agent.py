@@ -6,10 +6,13 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
+from prguard_ai.agents.base_agent import BaseAgent
+from prguard_ai.agents.tools.schemas import ToolInvocation
 from prguard_ai.analysis.diff_parser import DiffHunk, extract_changed_files, parse_diff
 from prguard_ai.analysis.repo_indexer import retrieve_similar_code
+from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
 from prguard_ai.llm.client import extract_json_from_llm_response, generate_analysis
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 from prguard_ai.schemas.context import ReviewContext
@@ -238,76 +241,107 @@ def _attach_file_paths_to_llm_issues(issues: List[Issue], hunks: List[DiffHunk])
                 break
 
 
-def analyze_style(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -> AgentOutput:
-    """
-    Analyze style issues in the diff using both simple rules and LLM guidance.
-    """
-    repo_metadata = repo_metadata or {}
-    pr_id = repo_metadata.get("pr_id")
+class StyleAgent(BaseAgent):
+    agent_name = "style"
+    empty_confidence = 0.5
 
-    parsed = parse_diff(diff_text)
-    changed_files = extract_changed_files(parsed)[:MAX_FILES_PER_PR]
-    relevant_hunks: List[DiffHunk] = []
-    for f in changed_files:
-        relevant_hunks.extend(parsed.get(f, []))
-
-    # Simple rule-based style checks (indentation and long lines).
-    issues: List[Issue] = []
-    for hunk in relevant_hunks:
-        for line in hunk.lines:
-            if line.line_type != "add" or line.content.strip() == "":
-                continue
-            text = line.content
-            if "\t" in text:
-                issues.append(
-                    Issue(
-                        line=line.new_lineno or 1,
-                        severity="medium",
-                        message="Tab character used for indentation instead of spaces.",
-                        evidence=text[:200],
-                        confidence_source="rule_based",
-                        file_path=hunk.file_path,
-                    )
+    def build_tool_plan(self, diff_text: str) -> Sequence[ToolInvocation]:
+        parsed = parse_diff(diff_text)
+        changed_files = extract_changed_files(parsed)[:2]
+        plan: List[ToolInvocation] = [
+            ToolInvocation(
+                tool="search_codebase",
+                args={"query": "style", "limit": 3},
+                rationale="Find nearby repository conventions to compare against the diff.",
+            )
+        ]
+        for file_path in changed_files[:2]:
+            plan.append(
+                ToolInvocation(
+                    tool="read_file",
+                    args={"path": file_path, "start_line": 1, "end_line": 120},
+                    rationale=f"Inspect the changed file {file_path} for surrounding style context.",
                 )
-            if len(text) > 120:
-                issues.append(
-                    Issue(
-                        line=line.new_lineno or 1,
-                        severity="low",
-                        message="Line exceeds 120 characters.",
-                        evidence=text[:200],
-                        confidence_source="rule_based",
-                        file_path=hunk.file_path,
-                    )
+            )
+        if changed_files:
+            plan.append(
+                ToolInvocation(
+                    tool="run_linter",
+                    args={"path": changed_files[0]},
+                    rationale="Gather lightweight syntax and formatting signals for the primary changed file.",
                 )
-        issues.extend(_detect_frontend_design_issues(hunk))
+            )
+        return plan
 
-    # Retrieve repository style examples from the index (if present).
-    repo_examples: List[str] = []
-    for path, code in retrieve_similar_code("\n".join(h.header for h in relevant_hunks)):
-        repo_examples.append(f"# {path}\n{code[:400]}")
+    def synthesize_issues(self, diff_text: str, tool_outputs: Dict[str, Any]) -> List[Issue]:
+        parsed = parse_diff(diff_text)
+        changed_files = extract_changed_files(parsed)[:MAX_FILES_PER_PR]
+        relevant_hunks: List[DiffHunk] = []
+        for file_path in changed_files:
+            relevant_hunks.extend(parsed.get(file_path, []))
 
-    # LLM-based style reasoning with token budgeting.
-    llm_issues: List[Issue] = []
-    llm_skipped = False
-    if diff_text:
-        from prguard_ai.reliability.circuit_breaker import CircuitBreakerError
-        from prguard_ai.llm.client import TokenBudgetExceededError
-        try:
-            prompt = _build_llm_input(diff_text, repo_examples)
-            text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
-            llm_issues = _parse_llm_issues(text)
-            _attach_file_paths_to_llm_issues(llm_issues, relevant_hunks)
-        except (CircuitBreakerError, TokenBudgetExceededError) as exc:
-            logger.warning("Style agent LLM skipped (circuit breaker open or budget exceeded) for PR %s: %s", pr_id, exc)
-            llm_skipped = True
+        issues: List[Issue] = []
+        for hunk in relevant_hunks:
+            for line in hunk.lines:
+                if line.line_type != "add" or line.content.strip() == "":
+                    continue
+                text = line.content
+                if "\t" in text:
+                    issues.append(
+                        Issue(
+                            line=line.new_lineno or 1,
+                            severity="medium",
+                            message="Tab character used for indentation instead of spaces.",
+                            evidence=text[:200],
+                            confidence_source="rule_based",
+                            file_path=hunk.file_path,
+                        )
+                    )
+                if len(text) > 120:
+                    issues.append(
+                        Issue(
+                            line=line.new_lineno or 1,
+                            severity="low",
+                            message="Line exceeds 120 characters.",
+                            evidence=text[:200],
+                            confidence_source="rule_based",
+                            file_path=hunk.file_path,
+                        )
+                    )
+            issues.extend(_detect_frontend_design_issues(hunk))
 
-    all_issues = issues + llm_issues
-    confidence = 0.9 if all_issues else 0.5
-    return AgentOutput(agent="style", confidence=confidence, issues=all_issues, llm_skipped=llm_skipped)
+        repo_examples: List[str] = []
+        retrieved = tool_outputs.get("search_codebase") or []
+        for item in retrieved:
+            path = item.get("path", "unknown")
+            content = item.get("content", "")
+            repo_examples.append(f"# {path}\n{content}")
+        if not repo_examples:
+            for path, code in retrieve_similar_code("\n".join(h.header for h in relevant_hunks)):
+                repo_examples.append(f"# {path}\n{code[:400]}")
 
+        llm_issues: List[Issue] = []
+        pr_id = self.repo_metadata.get("pr_id")
+        if diff_text:
+            from prguard_ai.reliability.circuit_breaker import CircuitBreakerError
+            from prguard_ai.llm.client import TokenBudgetExceededError
 
-class StyleAgent:
+            try:
+                prompt = _build_llm_input(diff_text, repo_examples)
+                text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
+                llm_issues = _parse_llm_issues(text)
+                _attach_file_paths_to_llm_issues(llm_issues, relevant_hunks)
+                self.reasoning_trace.append("style: synthesized LLM findings after grounding with repo examples")
+            except (CircuitBreakerError, TokenBudgetExceededError) as exc:
+                logger.warning("Style agent LLM skipped (circuit breaker open or budget exceeded) for PR %s: %s", pr_id, exc)
+                self.llm_skipped = True
+                self.reasoning_trace.append("style: skipped LLM synthesis due to circuit breaker or budget limits")
+
+        return issues + llm_issues
+
+    def score_confidence(self, issues: List[Issue]) -> float:
+        return estimate_issue_confidence(issues, empty_confidence=self.empty_confidence)
+
     @staticmethod
     def refine(initial_output: AgentOutput, context: ReviewContext) -> tuple[str, AgentOutput]:
         """Refine style agent issues and generate a dialogue message based on context."""
@@ -322,13 +356,13 @@ class StyleAgent:
                 "Respond with a JSON object containing message and issues."
             )
 
-        own_findings_str = json.dumps([issue.dict() for issue in initial_output.issues], indent=2)
+        own_findings_str = json.dumps([issue.model_dump() for issue in initial_output.issues], indent=2)
 
         other_findings_list = []
         for name, output in context.agent_outputs.items():
             if name != "style":
                 other_findings_list.append(
-                    f"Agent: {name}\nFindings:\n" + json.dumps([issue.dict() for issue in output.issues], indent=2)
+                    f"Agent: {name}\nFindings:\n" + json.dumps([issue.model_dump() for issue in output.issues], indent=2)
                 )
         other_findings_str = "\n\n".join(other_findings_list)
 
@@ -410,6 +444,11 @@ class StyleAgent:
             message = "LLM refinement skipped due to circuit breaker or budget constraints."
 
         return message, refined_output
+
+
+def analyze_style(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -> AgentOutput:
+    """Analyze style issues in the diff using rule-based and tool-grounded reasoning."""
+    return StyleAgent(repo_metadata).run_react_loop(diff_text)
 
 
 __all__ = ["analyze_style", "StyleAgent"]
