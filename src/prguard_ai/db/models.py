@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Column, Float, Integer, String, Text
+from sqlalchemy import Boolean, Column, Float, Integer, String, Text
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -54,8 +54,90 @@ class HumanFeedback(Base):
     created_at = Column(Float, nullable=False)
 
 
+class FindingRecord(Base):
+    """Normalized finding row used to correlate GitHub feedback and model runs."""
+
+    __tablename__ = "findings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    finding_key = Column(String(255), nullable=False, unique=True, index=True)
+    pr_id = Column(String(255), nullable=False, index=True)
+    file_path = Column(String(500), nullable=True)
+    line = Column(Integer, nullable=True)
+    severity = Column(String(50), nullable=False)
+    message = Column(Text, nullable=False)
+    confidence = Column(Float, nullable=True)
+    posted_comment_id = Column(String(255), nullable=True, index=True)
+    created_at = Column(Float, nullable=False)
+
+
+class OnlineFeedback(Base):
+    """GitHub reaction or human feedback linked to a finding."""
+
+    __tablename__ = "online_feedback"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    finding_key = Column(String(255), nullable=False, index=True)
+    pr_id = Column(String(255), nullable=False, index=True)
+    source = Column(String(50), nullable=False)
+    signal = Column(String(50), nullable=False)
+    score = Column(Float, nullable=False)
+    actor = Column(String(255), nullable=True)
+    created_at = Column(Float, nullable=False)
+
+
+class ABTestAssignment(Base):
+    """Stable experiment assignment for a repository or PR."""
+
+    __tablename__ = "ab_test_assignments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    experiment = Column(String(255), nullable=False, index=True)
+    subject = Column(String(255), nullable=False, index=True)
+    variant = Column(String(100), nullable=False)
+    assigned_at = Column(Float, nullable=False)
+
+
+class ShadowRun(Base):
+    """Silent model run stored for comparison without posting findings."""
+
+    __tablename__ = "shadow_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pr_id = Column(String(255), nullable=False, index=True)
+    model_version = Column(String(255), nullable=False)
+    findings_json = Column(Text, nullable=False)
+    posted = Column(Boolean, nullable=False, default=False)
+    created_at = Column(Float, nullable=False)
+
+
+class CalibrationSnapshot(Base):
+    """Confidence recalibration parameters derived from feedback."""
+
+    __tablename__ = "calibration_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    version = Column(String(255), nullable=False, index=True)
+    slope = Column(Float, nullable=False)
+    intercept = Column(Float, nullable=False)
+    sample_count = Column(Integer, nullable=False)
+    created_at = Column(Float, nullable=False)
+
+
 # ORM model aliases to satisfy system terminology requirements
 AuditLog = AgentLog
 TokenUsage = LLMUsage
 
-__all__ = ["Base", "AgentLog", "LLMUsage", "HumanFeedback", "AuditLog", "TokenUsage"]
+__all__ = [
+    "Base",
+    "AgentLog",
+    "LLMUsage",
+    "HumanFeedback",
+    "FindingRecord",
+    "OnlineFeedback",
+    "ABTestAssignment",
+    "ShadowRun",
+    "CalibrationSnapshot",
+    "AuditLog",
+    "TokenUsage",
+]
