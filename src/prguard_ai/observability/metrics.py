@@ -26,6 +26,11 @@ AGENT_ERRORS_TOTAL = Counter(
     ["agent"],
 )
 
+DEAD_LETTERED_TASKS = Counter(
+    "prguard_dead_lettered_tasks_total",
+    "Total number of tasks written to the dead-letter queue",
+)
+
 # ---------------------------------------------------------------------------
 # Histograms
 # ---------------------------------------------------------------------------
@@ -90,6 +95,7 @@ __all__ = [
     "AGENT_ERRORS_TOTAL",
     "AGENT_EXECUTION_TIME",
     "CIRCUIT_BREAKER_STATE",
+    "DEAD_LETTERED_TASKS",
     "LLM_TOKENS_USED",
     "REVIEW_CONFIDENCE",
     "TOKEN_BUDGET_REMAINING",

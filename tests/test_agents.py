@@ -1,5 +1,7 @@
 """Smoke tests for analysis agents."""
 
+from pathlib import Path
+
 import pytest
 
 from prguard_ai.agents.logic_agent import analyze_logic
@@ -65,6 +67,31 @@ index 111..222 100644
 
     assert todo_output.confidence < except_output.confidence
     assert todo_output.confidence < 0.7
+
+
+def test_context_lines_not_empty(tmp_path: Path):
+    diff = """diff --git a/app/main.py b/app/main.py
+index 111..222 100644
+--- a/app/main.py
++++ b/app/main.py
+@@ -1,2 +1,3 @@
+-def run():
+-    return old
++def run():
++    value = compute()
++    return value
+"""
+    sandbox_root = tmp_path / "sandbox"
+    file_path = sandbox_root / "app" / "main.py"
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    file_path.write_text("def run():\n    value = compute()\n    return value\n", encoding="utf-8")
+
+    output = analyze_logic(
+        diff,
+        {"pr_id": "owner/repo#1", "sandbox_path": str(sandbox_root)},
+    )
+
+    assert output.agent == "logic"
 
 
 def test_security_agent_confidence_tracks_issue_strength():

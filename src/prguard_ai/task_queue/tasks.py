@@ -2,22 +2,31 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Dict
 
 from prguard_ai.task_queue.celery_app import celery_app
 from prguard_ai.gh_client.github_client import post_pr_comment, post_inline_comment, format_pr_review
 from prguard_ai.task_queue.task_registry import complete_pr_processing
-from prguard_ai.observability.metrics import TOTAL_PRS_PROCESSED, REVIEW_CONFIDENCE
+from prguard_ai.observability.metrics import DEAD_LETTERED_TASKS, TOTAL_PRS_PROCESSED, REVIEW_CONFIDENCE
 
 logger = logging.getLogger(__name__)
+_DLQ_KEY = "prguard:dlq"
+
+
+def _enqueue_dead_letter(payload: dict) -> None:
+    from prguard_ai.task_queue.redis_client import get_redis
+
+    get_redis().rpush(_DLQ_KEY, json.dumps(payload))
+    DEAD_LETTERED_TASKS.inc()
 
 
 @celery_app.task(name="task_queue.tasks.prepare_repository")
-def prepare_repository(pr_id: str, repo: str, pr_number: int, payload: dict) -> str:
+def prepare_repository(pr_id: str, repo: str, pr_number: int, payload: dict) -> dict:
     """
     Clone, index, and warm code graph asynchronously in a background task,
-    then return the PR diff text.
+    then return the PR diff text and sandbox path.
     """
     from prguard_ai.gh_client.github_client import get_pr_diff
     from prguard_ai.analysis.repo_sandbox import clone_repository, cleanup_repository
@@ -39,13 +48,12 @@ def prepare_repository(pr_id: str, repo: str, pr_number: int, payload: dict) -> 
             except Exception:
                 logger.warning("Failed to build code graph for repository %s", repo)
     except Exception as exc:
-        logger.exception("Failed to prepare repository for PR %s", pr_id)
-        raise exc
-    finally:
         if sandbox_path:
             cleanup_repository(sandbox_path)
+        logger.exception("Failed to prepare repository for PR %s", pr_id)
+        raise exc
 
-    return diff_text
+    return {"diff_text": diff_text, "sandbox_path": sandbox_path}
 
 
 @celery_app.task(name="task_queue.tasks.post_review")
@@ -55,6 +63,7 @@ def post_review(report_dict: dict, repo: str, pr_number: int) -> dict:
     """
     pr_id = f"{repo}#{pr_number}"
     logger.info("Posting final review comment for %s", pr_id)
+    sandbox_path = report_dict.pop("sandbox_path", None)
 
     try:
         comment_body = format_pr_review(report_dict)
@@ -91,6 +100,10 @@ def post_review(report_dict: dict, repo: str, pr_number: int) -> dict:
         REVIEW_CONFIDENCE.observe(float(report_dict.get("overall_confidence", 0.0)))
 
     finally:
+        if sandbox_path:
+            from prguard_ai.analysis.repo_sandbox import cleanup_repository
+
+            cleanup_repository(sandbox_path)
         # Always mark PR processing as complete
         complete_pr_processing(pr_id)
 
@@ -104,5 +117,12 @@ def on_task_failure(*args: Any, pr_id: str | None = None, **kwargs: Any) -> None
     Cleans up the PR processing status and logs the error.
     """
     logger.error("PRGuard processing workflow failed for PR %s. args=%s, kwargs=%s", pr_id, args, kwargs)
+    _enqueue_dead_letter(
+        {
+            "pr_id": pr_id,
+            "args": [str(arg) for arg in args],
+            "kwargs": {key: str(value) for key, value in kwargs.items()},
+        }
+    )
     if pr_id:
         complete_pr_processing(pr_id)

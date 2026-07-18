@@ -1,9 +1,8 @@
-version: "3.9"
-
 services:
   api:
     build: ..
     container_name: prguard-api-prod
+    init: true
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GITHUB_APP_ID=${GITHUB_APP_ID}
@@ -12,16 +11,27 @@ services:
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_PERSIST_DIR=/app/.chroma
-    command: uvicorn main:app --host 0.0.0.0 --port 8000
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/prguard
+    command: uvicorn prguard_ai.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
 
   worker:
     build: ..
     container_name: prguard-worker-prod
-    command: celery -A prguard_ai.task_queue.celery_app worker --loglevel=INFO --concurrency=2
+    init: true
+    command: celery -A prguard_ai.task_queue.celery_app worker --loglevel=INFO --concurrency=2 -Q style,logic,security,arbitrator,orchestrator,refinement,celery
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GITHUB_APP_ID=${GITHUB_APP_ID}
@@ -30,14 +40,48 @@ services:
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
       - REDIS_URL=redis://redis:6379/0
       - CHROMA_PERSIST_DIR=/app/.chroma
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/prguard
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A prguard_ai.task_queue.celery_app inspect ping -d celery@$$HOSTNAME"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   redis:
     image: redis:7
     container_name: prguard-redis-prod
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  db:
+    image: postgres:15-alpine
+    container_name: prguard-db-prod
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=prguard
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d prguard"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
   prometheus:
     image: prom/prometheus:v2.53.0
@@ -56,5 +100,8 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_started
 
+volumes:
+  postgres_data:

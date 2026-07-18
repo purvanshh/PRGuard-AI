@@ -30,6 +30,10 @@ class ReviewContext(BaseModel):
     dialogue: List[DialogueTurn] = Field(
         default_factory=list, description="Debate and dialogue history between the agents."
     )
+    sandbox_path: Optional[str] = Field(
+        default=None,
+        description="Optional sandbox path holding the checked-out repository during analysis.",
+    )
 
 
 __all__ = ["ReviewContext", "DialogueTurn"]

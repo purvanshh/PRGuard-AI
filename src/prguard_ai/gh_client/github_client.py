@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import hashlib
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -15,6 +16,7 @@ from prguard_ai.config.settings import settings
 from prguard_ai.gh_client.app_auth import get_installation_token
 
 logger = logging.getLogger(__name__)
+PRGUARD_REVIEW_MARKER = "<!-- prguard-ai-review -->"
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -124,6 +126,26 @@ def format_pr_review(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _body_digest(body: str) -> str:
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+
+def _review_body_with_marker(body: str) -> str:
+    marker = f"{PRGUARD_REVIEW_MARKER} digest:{_body_digest(body)}"
+    return f"{marker}\n{body}"
+
+
+def _is_same_review(existing_body: str, new_body: str) -> bool:
+    return existing_body.strip() == _review_body_with_marker(new_body).strip()
+
+
+def _find_existing_review_comment(pr) -> Optional[object]:
+    for comment in pr.get_issue_comments():
+        if PRGUARD_REVIEW_MARKER in (comment.body or ""):
+            return comment
+    return None
+
+
 def post_pr_comment(
     repo_full_name: str,
     pr_number: int,
@@ -140,7 +162,15 @@ def post_pr_comment(
     repo = gh.get_repo(repo_full_name)
     pr = repo.get_pull(pr_number)
     logger.info("Posting PR comment to %s#%s", repo_full_name, pr_number)
-    pr.create_issue_comment(body)
+    marked_body = _review_body_with_marker(body)
+    existing = _find_existing_review_comment(pr)
+    if existing is not None:
+        if _is_same_review(existing.body or "", body):
+            logger.info("Skipping duplicate PR comment for %s#%s", repo_full_name, pr_number)
+            return
+        existing.edit(marked_body)
+        return
+    pr.create_issue_comment(marked_body)
 
 
 def post_inline_comment(
@@ -161,6 +191,16 @@ def post_inline_comment(
     repo = gh.get_repo(repo_full_name)
     pr = repo.get_pull(pr_number)
     commit_id = pr.head.sha
+    for comment in pr.get_review_comments():
+        if comment.path == path and int(comment.line or 0) == int(line) and (comment.body or "") == body:
+            logger.info(
+                "Skipping duplicate inline comment for %s#%s at %s:%s",
+                repo_full_name,
+                pr_number,
+                path,
+                line,
+            )
+            return
     logger.info(
         "Posting inline comment to %s#%s at %s:%s",
         repo_full_name,

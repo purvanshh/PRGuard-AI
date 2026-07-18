@@ -306,12 +306,7 @@ async def github_webhook(
 
         workflow = chain(
             prepare_repository.s(pr_id, repo, pr_number, payload),
-            group(
-                run_style_agent.s(repo_metadata),
-                run_logic_agent.s(repo_metadata),
-                run_security_agent.s(repo_metadata),
-            ),
-            run_arbitrator.s(),
+            review_pr.s(pr_id, repo_metadata),
             post_review.s(repo, pr_number),
         )
 

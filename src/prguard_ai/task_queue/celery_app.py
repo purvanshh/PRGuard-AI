@@ -49,7 +49,10 @@ celery_app.conf.task_routes = {
 }
 celery_app.conf.task_time_limit = 300
 celery_app.conf.task_soft_time_limit = 240
-# Don't use eager mode - let tasks run async normally
+celery_app.conf.task_acks_late = True
+celery_app.conf.task_reject_on_worker_lost = True
+celery_app.conf.worker_prefetch_multiplier = 1
+celery_app.conf.task_acks_on_failure_or_timeout = False
 
 if _EAGER_MODE:
     # When Redis is unavailable (e.g., local dev without Docker), run tasks synchronously.
@@ -218,7 +221,7 @@ def run_arbitrator(agent_outputs: List[Dict[str, Any]]) -> dict:
 )
 def refine_agent(pr_id: str, agent_name: str) -> dict:
     """Celery task that executes an agent's refinement pass."""
-    from prguard_ai.db.redis_client import get_review_context, store_review_context
+    from prguard_ai.db.redis_client import get_review_context, store_review_agent_output
     from prguard_ai.agents import get_agent_by_name
     from prguard_ai.schemas.agent_output import AgentOutput
 
@@ -233,11 +236,10 @@ def refine_agent(pr_id: str, agent_name: str) -> dict:
         message, refined = agent.refine(initial, ctx)
 
         # Update context in Redis (best-effort write; orchestrator performs final consistent merge)
-        ctx.agent_outputs[agent_name] = refined
-        store_review_context(pr_id, ctx)
+        store_review_agent_output(pr_id, agent_name, refined)
         return {
             "message": message,
-            "refined_output": refined.dict()
+            "refined_output": refined.model_dump()
         }
 
 
@@ -262,4 +264,3 @@ def setup_celery_logger(logger, *args, **kwargs):
     from prguard_ai.observability.structured_logging import JsonLogFormatter
     for handler in logger.handlers:
         handler.setFormatter(JsonLogFormatter())
-

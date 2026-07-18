@@ -91,6 +91,13 @@ def _build_llm_input(
     )
 
 
+def _resolve_context_file_path(file_path: str, sandbox_path: str | None) -> Path:
+    candidate = Path(file_path)
+    if candidate.is_absolute() or not sandbox_path:
+        return candidate
+    return Path(sandbox_path) / candidate
+
+
 def _parse_llm_issues(raw: str) -> List[Issue]:
     clean = extract_json_from_llm_response(raw)
     try:
@@ -126,6 +133,7 @@ def analyze_logic(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -
     """
     repo_metadata = repo_metadata or {}
     pr_id = repo_metadata.get("pr_id")
+    sandbox_path = repo_metadata.get("sandbox_path")
     parsed = parse_diff(diff_text)
 
     files = list(parsed.keys())[:MAX_FILES_PER_PR]
@@ -139,7 +147,8 @@ def analyze_logic(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -
         if h.lines:
             first_add = next((l for l in h.lines if l.new_lineno is not None), None)
             if first_add is not None and first_add.new_lineno is not None:
-                ctx = extract_context_lines(h.file_path, first_add.new_lineno, window=10)
+                ctx_path = _resolve_context_file_path(h.file_path, sandbox_path)
+                ctx = extract_context_lines(ctx_path, first_add.new_lineno, window=10)
                 if ctx:
                     context_snippets.append(
                         f"# {h.file_path}:{first_add.new_lineno}\n" + "\n".join(ctx[:40])
