@@ -112,10 +112,6 @@ def test_review_pr_orchestrator(monkeypatch):
     # Set Celery to always eager for testing synchronous execution
     monkeypatch.setattr(celery_app.conf, "task_always_eager", True)
 
-    # Mock github client posting methods directly inside orchestrator module
-    monkeypatch.setattr("prguard_ai.task_queue.orchestrator.post_pr_comment", MagicMock())
-    monkeypatch.setattr("prguard_ai.task_queue.orchestrator.post_inline_comment", MagicMock())
-
     # Mock generate_analysis in all agent modules to return correct JSON structure
     mocked_response = {
         "message": "Let's align",
@@ -129,7 +125,7 @@ def test_review_pr_orchestrator(monkeypatch):
     diff_text = "diff --git a/foo.py b/foo.py\n+new line"
     repo_metadata = {"repository": "owner/repo", "pr_number": 2, "pr_id": pr_id}
 
-    report_dict = review_pr(pr_id, diff_text, repo_metadata)
+    report_dict = review_pr({"diff_text": diff_text, "sandbox_path": None}, pr_id, repo_metadata)
     assert "overall_confidence" in report_dict
     assert "issues" in report_dict
 
@@ -143,3 +139,4 @@ def test_review_pr_orchestrator(monkeypatch):
     assert "logic" in ctx.agent_outputs
     assert "security" in ctx.agent_outputs
     assert len(ctx.dialogue) > 0
+    assert ctx.coordinator_guidance

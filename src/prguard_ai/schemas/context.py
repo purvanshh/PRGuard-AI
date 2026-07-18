@@ -34,6 +34,10 @@ class ReviewContext(BaseModel):
         default=None,
         description="Optional sandbox path holding the checked-out repository during analysis.",
     )
+    coordinator_guidance: List[str] = Field(
+        default_factory=list,
+        description="Coordinator steering questions and critique prompts issued during debate.",
+    )
 
 
 __all__ = ["ReviewContext", "DialogueTurn"]

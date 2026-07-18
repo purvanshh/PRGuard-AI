@@ -82,6 +82,12 @@ def review_pr(prepared: Dict[str, Any], pr_id: str, repo_metadata: Dict[str, Any
 
             for round_num in range(1, max_rounds + 1):
                 ctx.round = round_num
+                moderation = CoordinatorAgent.moderate_round(ctx)
+                for critique in moderation.get("critiques", []):
+                    ctx.dialogue.append(DialogueTurn(speaker="coordinator", message=critique))
+                ctx.coordinator_guidance.extend(moderation.get("steering_questions", []))
+                for question in moderation.get("steering_questions", []):
+                    ctx.dialogue.append(DialogueTurn(speaker="coordinator", message=question))
                 store_review_context(pr_id, ctx)
 
                 refine_grp = group(
