@@ -165,25 +165,20 @@ Every finding carries a `confidence_source` tag that maps to a numeric weight:
 
 ## Production Features
 
-PRGuard AI has been systematically hardened across fifteen production phases:
+PRGuard AI has been built across ten production-oriented phases:
 
 | Phase | Feature | Description |
 |-------|---------|-------------|
-| 1 | Async Webhook Processing | Webhook handler returns `202 Accepted` immediately; full pipeline runs asynchronously via Celery `group` + `chain` |
-| 2 | LLM Circuit Breaker | Thread-safe circuit breaker on all LLM calls; agents fall back to rule-only mode when the breaker is open |
-| 3 | PostgreSQL Audit Logging | SQLAlchemy async ORM replaces SQLite; Alembic manages schema migrations |
-| 4 | Comprehensive Health Checks | `/health`, `/health/ready`, and `/health/live` endpoints covering Redis, PostgreSQL, LLM, GitHub, Celery, ChromaDB, disk space, logging, and repository cache |
-| 5 | Centralized Configuration | All environment variables and constants consolidated into a Pydantic `Settings` model with fail-fast validation |
-| 6 | Redis Token Budgeting | Atomic per-PR token accounting via Redis `WATCH` pipelines with 1-hour TTL; in-memory fallback on Redis failure |
-| 7 | Arbitrator Retry and Degradation | Arbitrator retries up to 2x with exponential backoff; posts degraded review if agents partially fail |
-| 8 | LLM Output Sanitization | Pydantic validation, HTML escaping, non-printable character stripping, and 20-issue-per-agent cap on all LLM outputs |
-| 9 | Production Redis Enforcement | `REDIS_FALLBACK_TO_MEMORY` defaults to `false`; fails fast on connection failure in production |
-| 10 | Test Coverage Enforcement | `pytest-cov` with a 70% minimum threshold enforced in CI |
-| 11 | Structured JSON Logging | `JsonLogFormatter` across all API and Celery worker logs; OpenTelemetry trace/span ID injection; exception stack trace serialization |
-| 12 | Repository Cache | Persistent shallow clone cache with LRU eviction at 10 GB; hard-link copy into analysis sandboxes for near-instant workspace setup |
-| 13 | Prometheus Metrics Hardening | Per-agent latency histograms, circuit breaker state gauge, token budget gauge, agent error counter; all wired to the `/metrics` endpoint |
-| 14 | Evaluation Framework | F1 score added to all evaluation metrics; `evaluate_dataset_file` and `run_evaluation_suite` helpers; full CLI entry point via `python -m prguard_ai.evaluation.evaluator --dataset` |
-| 15 | Coverage Lift to 76% | New test files for structured logging, all Pydantic schemas, task registry, Redis client, and all Celery task functions — 203 tests total |
+| 1 | Foundation Repair | Docker Compose with healthchecks, sandbox deletion bug fix, TOCTOU race via Redis `setnx`, `task_acks_late`, dead-letter queue, idempotent `post_review` via comment marker digest |
+| 2 | Evaluation Infrastructure | Semantic issue matching (token overlap + line proximity), confidence intervals, per-agent metrics, 500+ curated dataset fixtures |
+| 3 | Real Agents with Tools | `BaseAgent` ABC with ReAct loop, 7 tools (read_file, search_codebase, run_linter, run_test, get_type_info, git_blame, dependency_scan), `llm_skipped` flag |
+| 4 | Real Coordinator | `CoordinatorAgent.moderate_round()` with LLM-powered critique generation, `_fallback_guidance()`, steering questions in `ReviewContext` |
+| 5 | Real Arbitrator | Semantic deduplication, conflict resolution via `resolve_conflict()`, coherent unified review, Platt scaling calibration |
+| 6 | Model Routing & Cost Optimization | `ModelRouter` with per-agent model config, `SemanticCache` (Jaccard similarity), fallback chain, per-model token budgeting |
+| 7 | Scalability | Per-repo sliding-window rate limiting, diff chunking for large PRs, separate broker and data Redis instances |
+| 8 | Distributed Tracing & Observability | OTel trace propagation across Celery tasks, correlation ID in logs, Grafana dashboard (p95 latency, queue depth, agent errors, circuit breaker), AlertManager rules |
+| 9 | Security Hardening | Secret redaction, `public_error_code()`, strict Pydantic webhook payload validation, path traversal blocking, `git clone --config core.hooksPath=/dev/null` |
+| 10 | Human-in-the-Loop | `HumanReviewQueue` with confidence threshold auto-posting, Flask approval dashboard, escalation tracking, Alembic migration |
 
 ---
 
@@ -208,13 +203,14 @@ cp .env.example .env
 docker compose up --build
 ```
 
-This starts four containers:
+This starts five containers:
 
 | Container | Role | Port |
 |-----------|------|------|
 | `prguard-api` | FastAPI webhook server | 8000 |
 | `prguard-worker` | Celery agent worker | — |
-| `prguard-redis` | Redis broker and result backend | 6379 |
+| `prguard-redis-data` | Redis data store (context, cache) | 6379 |
+| `prguard-redis-broker` | Redis Celery broker and result backend | 6380 |
 | `prguard-db` | PostgreSQL audit database | 5432 |
 
 ### Local Development
@@ -256,7 +252,7 @@ The server runs on `http://localhost:8000`.
 pytest
 ```
 
-The test suite enforces a minimum coverage threshold of 70%. 203 tests cover diff parsing, agent analysis, confidence scoring, circuit breaker behaviour, token budgeting, health checks, sanitization, repository caching, task registry, Celery task execution, Pydantic schemas, structured logging, and the end-to-end pipeline. Current coverage is 76%.
+The test suite enforces a minimum coverage threshold of 70%. 237 tests cover diff parsing, agent analysis, confidence scoring, evaluation infrastructure, model routing, scalability controls, distributed tracing, security hardening, human-in-the-loop review, circuit breaker behaviour, token budgeting, health checks, sanitization, repository caching, task registry, Celery task execution, Pydantic schemas, structured logging, and the end-to-end pipeline. Current coverage is 81%.
 
 ---
 
@@ -369,7 +365,7 @@ prguard-ai/
 ├── fixtures/                # Test fixtures and sample diff data
 ├── prompts/                 # Agent prompt templates
 ├── scripts/                 # Utility and maintenance scripts
-├── tests/                   # Unit and integration test suite (203 tests, 76% coverage)
+├── tests/                   # Unit and integration test suite (237 tests, 81% coverage)
 ├── .github/workflows/       # GitHub Actions CI pipeline
 ├── Dockerfile               # Python 3.11-slim container image
 ├── docker-compose.yml       # Multi-service orchestration (API, worker, Redis, PostgreSQL)
@@ -398,7 +394,7 @@ prguard-ai/
 
 PRGuard AI includes an evaluation framework for benchmarking agent accuracy against labeled datasets:
 
-1. **Dataset**: Five hand-annotated PR diffs in `evaluation/dataset/` with expected issues mapped to specific lines.
+1. **Dataset**: 500+ hand-annotated PR diffs in `evaluation/dataset/` with expected issues mapped to specific lines.
 2. **Pipeline**: Each diff is processed through all three agents and the arbitrator to produce a detected issue set.
 3. **Metrics**: Standard information-retrieval metrics:
 
@@ -441,28 +437,22 @@ results = run_evaluation_suite(Path("src/prguard_ai/evaluation/dataset/"))
 
 ## Roadmap
 
-- [x] Multi-language support — Python, Go, TypeScript, and Rust via tree-sitter
-- [x] Async webhook processing with Celery group/chain workflows
-- [x] LLM circuit breaker with rule-only fallback mode
-- [x] PostgreSQL audit logging with Alembic migrations
-- [x] Comprehensive health checks with readiness and liveness probes
-- [x] Centralized Pydantic settings with fail-fast validation
-- [x] Redis-backed token budgeting with atomic per-PR accounting
-- [x] Arbitrator retry logic and graceful degradation on partial agent failures
-- [x] LLM output validation and HTML sanitization
-- [x] Structured JSON logging with OpenTelemetry trace propagation
-- [x] Persistent repository cache with LRU eviction
-- [x] Prometheus metrics hardening — per-agent latency, circuit breaker state, token budget, error counters
-- [x] Evaluation framework with F1 score, batch dataset runner, and CLI entry point
-- [x] Test coverage at 76% across 203 tests (threshold enforced at 70%)
-- [ ] Per-repository `.prguard.yml` configuration for custom thresholds
-- [ ] GitHub App Marketplace listing for one-click installation
-- [ ] PR suggestion API integration for auto-fixable findings
-- [ ] Incremental review — re-analyze only changed files on `synchronize` events
-- [ ] Domain-specific fine-tuning on labeled PR review datasets
-- [ ] Slack and Microsoft Teams notification integration
-- [ ] Self-hosted LLM support via Ollama or vLLM backends
-- [ ] Dashboard v2 — real-time review progress, historical analytics, cost tracking
+- [x] Foundation Repair — Docker Compose, sandbox fix, TOCTOU race, dead-letter queue, idempotent reviews
+- [x] Evaluation Infrastructure — semantic issue matching, confidence intervals, per-agent metrics, 500+ dataset fixtures
+- [x] Real Agents with Tools — BaseAgent ABC with ReAct loop, 7 tools
+- [x] Real Coordinator — LLM-powered moderation, steering questions, convergence detection
+- [x] Real Arbitrator — semantic dedup, conflict resolution, Platt scaling calibration
+- [x] Model Routing & Cost Optimization — ModelRouter, SemanticCache, fallback chain
+- [x] Scalability — per-repo rate limiting, diff chunking, separate broker/data Redis
+- [x] Distributed Tracing & Observability — OTel propagation, Grafana dashboard, AlertManager rules
+- [x] Security Hardening — secret redaction, strict validation, path traversal blocking
+- [x] Human-in-the-Loop — review queue, confidence auto-posting, Flask dashboard, escalation
+- [x] Test coverage at 81% across 237 tests (threshold enforced at 70%)
+- [ ] Phase 11: Policy Engine — `.prguard.yml` parser, per-repo rules, org-level inheritance, enforcement
+- [ ] Phase 12: Online Evaluation — GitHub reaction tracking, A/B testing, shadow deployments
+- [ ] Phase 13: Prompt Management — versioned prompts, feature flags, canary deployments, model registry
+- [ ] Phase 14: Kubernetes Deployment — Helm chart, Terraform module, production runbook
+- [ ] Phase 15: Final Evaluation & Submission — 500+ PR eval run, demo video, Grafana screenshots, ADRs
 
 ---
 

@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0372",
+  "description": "Variable shadowing",
+  "diff": "diff --git a/app/filter.py b/app/filter.py\nindex 111..222 100644\n--- a/app/filter.py\n+++ b/app/filter.py\n@@ -18,2 +18,3 @@\n def filter(items):\n+    items = [x for x in items if x > 0]\n     return items",
+  "expected_issues": [
+    {
+      "line": 20,
+      "message": "Variable shadows built-in function 'filter'",
+      "severity": "low"
+    }
+  ]
+}

@@ -4,6 +4,7 @@ services:
     container_name: prguard-api-prod
     init: true
     environment:
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GITHUB_APP_ID=${GITHUB_APP_ID}
       - GITHUB_APP_PRIVATE_KEY=${GITHUB_APP_PRIVATE_KEY}
@@ -36,6 +37,7 @@ services:
     init: true
     command: celery -A prguard_ai.task_queue.celery_app worker --loglevel=INFO --concurrency=2 -Q style,logic,security,arbitrator,orchestrator,refinement,celery
     environment:
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - GITHUB_APP_ID=${GITHUB_APP_ID}
       - GITHUB_APP_PRIVATE_KEY=${GITHUB_APP_PRIVATE_KEY}

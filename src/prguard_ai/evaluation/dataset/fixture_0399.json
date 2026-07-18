@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0399",
+  "description": "Division by zero",
+  "diff": "diff --git a/app/math.py b/app/math.py\nindex 111..222 100644\n--- a/app/math.py\n+++ b/app/math.py\n@@ -18,2 +18,2 @@\n def divide(a, b):\n+    return a / b",
+  "expected_issues": [
+    {
+      "line": 20,
+      "message": "Division by zero if b is 0",
+      "severity": "high"
+    }
+  ]
+}

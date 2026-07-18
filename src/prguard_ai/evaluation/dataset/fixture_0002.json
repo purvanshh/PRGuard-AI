@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0002",
+  "description": "SQL injection via string concatenation",
+  "diff": "diff --git a/app/queries.py b/app/queries.py\nindex 111..222 100644\n--- a/app/queries.py\n+++ b/app/queries.py\n@@ -21,2 +21,3 @@\n def get_user(name):\n+    query = \"SELECT * FROM users WHERE name = '\" + name + \"'\"\n     return db.execute(query)",
+  "expected_issues": [
+    {
+      "line": 23,
+      "message": "SQL injection via string-concatenated query",
+      "severity": "high"
+    }
+  ]
+}

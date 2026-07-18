@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0339",
+  "description": "Insecure deserialization yaml",
+  "diff": "diff --git a/app/config.py b/app/config.py\nindex 111..222 100644\n--- a/app/config.py\n+++ b/app/config.py\n@@ -33,2 +33,3 @@\n import yaml\n+    config = yaml.load(user_data)\n     return config",
+  "expected_issues": [
+    {
+      "line": 35,
+      "message": "Unsafe yaml.load allows arbitrary code execution",
+      "severity": "high"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "id": "fixture_0342",
+  "description": "Safe subprocess without shell",
+  "diff": "diff --git a/app/run.py b/app/run.py\nindex 111..222 100644\n--- a/app/run.py\n+++ b/app/run.py\n@@ -21,2 +21,3 @@\n import subprocess\n+    result = subprocess.run([\"ls\", \"-l\"], capture_output=True)\n     return result.stdout",
+  "expected_issues": []
+}

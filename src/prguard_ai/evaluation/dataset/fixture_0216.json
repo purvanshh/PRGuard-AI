@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0216",
+  "description": "Infinite loop",
+  "diff": "diff --git a/app/poller.py b/app/poller.py\nindex 111..222 100644\n--- a/app/poller.py\n+++ b/app/poller.py\n@@ -28,2 +28,3 @@\n def poll():\n+    while True:\n         pass",
+  "expected_issues": [
+    {
+      "line": 30,
+      "message": "Infinite loop without break condition",
+      "severity": "medium"
+    }
+  ]
+}

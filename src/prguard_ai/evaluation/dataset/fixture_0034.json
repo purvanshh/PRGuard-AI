@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0034",
+  "description": "Forgotten await",
+  "diff": "diff --git a/app/async_utils.py b/app/async_utils.py\nindex 111..222 100644\n--- a/app/async_utils.py\n+++ b/app/async_utils.py\n@@ -17,2 +17,3 @@\n async def get_data():\n+    result = fetch_data()\n     return result",
+  "expected_issues": [
+    {
+      "line": 19,
+      "message": "Coroutine 'fetch_data' was never awaited",
+      "severity": "high"
+    }
+  ]
+}

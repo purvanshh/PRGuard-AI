@@ -1,0 +1,17 @@
+{
+  "id": "fixture_0420",
+  "description": "Null dereference + TODO",
+  "diff": "diff --git a/app/format.py b/app/format.py\nindex 111..222 100644\n--- a/app/format.py\n+++ b/app/format.py\n@@ -28,2 +28,2 @@\n def format_user(user):\n+    return user.name.upper()  # TODO: handle None",
+  "expected_issues": [
+    {
+      "line": 30,
+      "message": "Potential None dereference if user is None",
+      "severity": "medium"
+    },
+    {
+      "line": 30,
+      "message": "TODO present in newly added code",
+      "severity": "low"
+    }
+  ]
+}

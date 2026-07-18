@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0452",
+  "description": "Assert statement used for validation",
+  "diff": "diff --git a/app/auth.py b/app/auth.py\nindex 111..222 100644\n--- a/app/auth.py\n+++ b/app/auth.py\n@@ -30,2 +30,3 @@\n def validate(user):\n+    assert user.is_admin, \"Not authorized\"\n     return True",
+  "expected_issues": [
+    {
+      "line": 32,
+      "message": "assert used for validation; disabled with -O flag",
+      "severity": "medium"
+    }
+  ]
+}

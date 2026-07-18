@@ -1,0 +1,17 @@
+{
+  "id": "fixture_0074",
+  "description": "SQL injection + TODO",
+  "diff": "diff --git a/app/search.py b/app/search.py\nindex 111..222 100644\n--- a/app/search.py\n+++ b/app/search.py\n@@ -12,2 +12,3 @@\n def search(term):\n+    query = \"SELECT * FROM items WHERE name LIKE '%\" + term + \"%'\"  # TODO: use parameterized\n     return db.execute(query)",
+  "expected_issues": [
+    {
+      "line": 14,
+      "message": "SQL injection via string-concatenated query",
+      "severity": "high"
+    },
+    {
+      "line": 14,
+      "message": "TODO present in newly added code",
+      "severity": "low"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0167",
+  "description": "eval() with user input",
+  "diff": "diff --git a/app/process.py b/app/process.py\nindex 111..222 100644\n--- a/app/process.py\n+++ b/app/process.py\n@@ -23,2 +23,3 @@\n def process(data):\n+    result = eval(data)  # DANGER: user input to eval\n     return result",
+  "expected_issues": [
+    {
+      "line": 25,
+      "message": "eval() called on potentially user-controlled input",
+      "severity": "high"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0175",
+  "description": "Path traversal",
+  "diff": "diff --git a/app/files.py b/app/files.py\nindex 111..222 100644\n--- a/app/files.py\n+++ b/app/files.py\n@@ -19,2 +19,3 @@\n def read_file(filename):\n+    path = f\"/var/data/{filename}\"\n     return open(path).read()",
+  "expected_issues": [
+    {
+      "line": 21,
+      "message": "Path traversal vulnerability via unvalidated filename",
+      "severity": "high"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0458",
+  "description": "Comparison with None using ==",
+  "diff": "diff --git a/app/check.py b/app/check.py\nindex 111..222 100644\n--- a/app/check.py\n+++ b/app/check.py\n@@ -33,2 +33,3 @@\n if result == None:\n+    return default_value\n     return result",
+  "expected_issues": [
+    {
+      "line": 35,
+      "message": "Comparison to None should use 'is' not '=='",
+      "severity": "low"
+    }
+  ]
+}

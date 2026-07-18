@@ -1,0 +1,17 @@
+{
+  "id": "fixture_0116",
+  "description": "Command injection + long line",
+  "diff": "diff --git a/app/network.py b/app/network.py\nindex 111..222 100644\n--- a/app/network.py\n+++ b/app/network.py\n@@ -23,2 +23,3 @@\n def ping_host(hostname, timeout, retries, verbose, output_format, log_level, use_sudo, resolve_dns):\n+    subprocess.run(f\"ping -c 1 {hostname}\", shell=True, timeout=timeout, capture_output=verbose)\n     return output",
+  "expected_issues": [
+    {
+      "line": 25,
+      "message": "Command injection via shell=True with interpolated input",
+      "severity": "high"
+    },
+    {
+      "line": 25,
+      "message": "Line exceeds 120 character limit",
+      "severity": "low"
+    }
+  ]
+}

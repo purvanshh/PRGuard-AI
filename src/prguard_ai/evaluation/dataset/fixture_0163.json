@@ -1,0 +1,6 @@
+{
+  "id": "fixture_0163",
+  "description": "Type annotation addition",
+  "diff": "diff --git a/app/greet.py b/app/greet.py\nindex 111..222 100644\n--- a/app/greet.py\n+++ b/app/greet.py\n@@ -29,1 +29,2 @@\n\n+def greet(name: str) -> str:\n     return f\"Hello, {name}\"",
+  "expected_issues": []
+}

@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0219",
+  "description": "Trailing whitespace",
+  "diff": "diff --git a/app/clean.py b/app/clean.py\nindex 111..222 100644\n--- a/app/clean.py\n+++ b/app/clean.py\n@@ -20,2 +20,3 @@\n def clean():\n+    pass    \n     return True",
+  "expected_issues": [
+    {
+      "line": 22,
+      "message": "Line has trailing whitespace",
+      "severity": "low"
+    }
+  ]
+}

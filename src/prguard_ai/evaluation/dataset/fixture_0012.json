@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0012",
+  "description": "Mutable default argument",
+  "diff": "diff --git a/app/utils.py b/app/utils.py\nindex 111..222 100644\n--- a/app/utils.py\n+++ b/app/utils.py\n@@ -13,2 +13,3 @@\n def add_item(item, items=[]):\n+    items.append(item)\n     return items",
+  "expected_issues": [
+    {
+      "line": 15,
+      "message": "Mutable default argument shared across calls",
+      "severity": "low"
+    }
+  ]
+}

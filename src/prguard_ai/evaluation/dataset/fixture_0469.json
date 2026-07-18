@@ -1,0 +1,6 @@
+{
+  "id": "fixture_0469",
+  "description": "Refactored constant",
+  "diff": "diff --git a/config/constants.py b/config/constants.py\nindex 111..222 100644\n--- a/config/constants.py\n+++ b/config/constants.py\n@@ -45,2 +45,2 @@\n # Constants\n+MAX_RETRIES = 3",
+  "expected_issues": []
+}

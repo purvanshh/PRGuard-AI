@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0098",
+  "description": "Bare except clause",
+  "diff": "diff --git a/app/errors.py b/app/errors.py\nindex 111..222 100644\n--- a/app/errors.py\n+++ b/app/errors.py\n@@ -8,2 +8,3 @@\n try:\n+    process(data)\n except:",
+  "expected_issues": [
+    {
+      "line": 10,
+      "message": "Bare except clause hides unexpected errors",
+      "severity": "medium"
+    }
+  ]
+}

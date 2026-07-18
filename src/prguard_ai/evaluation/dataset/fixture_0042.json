@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0042",
+  "description": "Template injection",
+  "diff": "diff --git a/app/templates.py b/app/templates.py\nindex 111..222 100644\n--- a/app/templates.py\n+++ b/app/templates.py\n@@ -47,2 +47,3 @@\n from jinja2 import Template\n+    tmpl = Template(f\"Hello {user_input}\")\n     return tmpl.render()",
+  "expected_issues": [
+    {
+      "line": 49,
+      "message": "Server-side template injection via unescaped user input",
+      "severity": "high"
+    }
+  ]
+}

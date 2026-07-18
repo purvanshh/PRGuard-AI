@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0183",
+  "description": "SSRF via user-controlled URL",
+  "diff": "diff --git a/app/fetch.py b/app/fetch.py\nindex 111..222 100644\n--- a/app/fetch.py\n+++ b/app/fetch.py\n@@ -31,2 +31,3 @@\n import requests\n+    resp = requests.get(url, timeout=5)\n     return resp.text",
+  "expected_issues": [
+    {
+      "line": 33,
+      "message": "Server-side request forgery via user-controlled URL",
+      "severity": "high"
+    }
+  ]
+}

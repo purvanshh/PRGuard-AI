@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0436",
+  "description": "None dereference",
+  "diff": "diff --git a/app/users.py b/app/users.py\nindex 111..222 100644\n--- a/app/users.py\n+++ b/app/users.py\n@@ -32,2 +32,2 @@\n def get_name(user):\n+    return user.name.upper()",
+  "expected_issues": [
+    {
+      "line": 34,
+      "message": "Potential None dereference if user is None",
+      "severity": "medium"
+    }
+  ]
+}

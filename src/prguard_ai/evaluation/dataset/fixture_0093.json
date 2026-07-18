@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0093",
+  "description": "MD5 hash used for passwords",
+  "diff": "diff --git a/app/crypto.py b/app/crypto.py\nindex 111..222 100644\n--- a/app/crypto.py\n+++ b/app/crypto.py\n@@ -16,2 +16,3 @@\n import hashlib\n+    digest = hashlib.md5(password.encode()).hexdigest()\n     return digest",
+  "expected_issues": [
+    {
+      "line": 18,
+      "message": "MD5 hash used; consider bcrypt or Argon2",
+      "severity": "medium"
+    }
+  ]
+}

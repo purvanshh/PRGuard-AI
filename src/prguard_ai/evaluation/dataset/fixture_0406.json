@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0406",
+  "description": "Command injection with shell=True",
+  "diff": "diff --git a/app/network.py b/app/network.py\nindex 111..222 100644\n--- a/app/network.py\n+++ b/app/network.py\n@@ -41,2 +41,3 @@\n import subprocess\n+    subprocess.run(f\"ping {host}\", shell=True)\n     return output",
+  "expected_issues": [
+    {
+      "line": 43,
+      "message": "Command injection via shell=True with interpolated input",
+      "severity": "high"
+    }
+  ]
+}

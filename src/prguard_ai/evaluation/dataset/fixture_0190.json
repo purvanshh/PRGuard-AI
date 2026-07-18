@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0190",
+  "description": "Mixed indentation",
+  "diff": "diff --git a/app/template.py b/app/template.py\nindex 111..222 100644\n--- a/app/template.py\n+++ b/app/template.py\n@@ -31,2 +31,3 @@\n def render():\n+\treturn template.render()\n     # back to spaces",
+  "expected_issues": [
+    {
+      "line": 33,
+      "message": "File uses mixed tabs and spaces for indentation",
+      "severity": "low"
+    }
+  ]
+}

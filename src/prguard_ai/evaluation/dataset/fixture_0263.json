@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0263",
+  "description": "TODO comment",
+  "diff": "diff --git a/app/todo.py b/app/todo.py\nindex 111..222 100644\n--- a/app/todo.py\n+++ b/app/todo.py\n@@ -34,2 +34,2 @@\n def process():\n+    pass  # TODO: implement error handling",
+  "expected_issues": [
+    {
+      "line": 36,
+      "message": "TODO present in newly added code",
+      "severity": "low"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0266",
+  "description": "Unused variable",
+  "diff": "diff --git a/app/process.py b/app/process.py\nindex 111..222 100644\n--- a/app/process.py\n+++ b/app/process.py\n@@ -21,2 +21,3 @@\n def process(data):\n+    temp = transform(data)\n     return data",
+  "expected_issues": [
+    {
+      "line": 23,
+      "message": "Unused variable 'temp'",
+      "severity": "low"
+    }
+  ]
+}

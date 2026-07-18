@@ -1,0 +1,17 @@
+{
+  "id": "fixture_0483",
+  "description": "Pickle + bare except",
+  "diff": "diff --git a/app/load.py b/app/load.py\nindex 111..222 100644\n--- a/app/load.py\n+++ b/app/load.py\n@@ -23,2 +23,4 @@\n try:\n+    data = pickle.loads(payload)\n except:\n     data = {}",
+  "expected_issues": [
+    {
+      "line": 25,
+      "message": "Unsafe pickle deserialization with untrusted input",
+      "severity": "high"
+    },
+    {
+      "line": 26,
+      "message": "Bare except clause hides unexpected errors",
+      "severity": "medium"
+    }
+  ]
+}

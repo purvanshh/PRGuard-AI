@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0514",
+  "description": "CamelCase function name",
+  "diff": "diff --git a/app/naming.py b/app/naming.py\nindex 111..222 100644\n--- a/app/naming.py\n+++ b/app/naming.py\n@@ -16,1 +16,2 @@\n\n+def getDataFromAPI():\n     \"\"\"Fetch data.\"\"\"",
+  "expected_issues": [
+    {
+      "line": 17,
+      "message": "Function name should use snake_case",
+      "severity": "low"
+    }
+  ]
+}

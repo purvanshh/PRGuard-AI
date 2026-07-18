@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0108",
+  "description": "Pickle deserialization",
+  "diff": "diff --git a/app/serialize.py b/app/serialize.py\nindex 111..222 100644\n--- a/app/serialize.py\n+++ b/app/serialize.py\n@@ -4,2 +4,3 @@\n import pickle\n+    data = pickle.loads(user_input)\n     return data",
+  "expected_issues": [
+    {
+      "line": 6,
+      "message": "Unsafe pickle deserialization with untrusted input",
+      "severity": "high"
+    }
+  ]
+}

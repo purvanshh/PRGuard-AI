@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0455",
+  "description": "Unused import",
+  "diff": "diff --git a/app/imports.py b/app/imports.py\nindex 111..222 100644\n--- a/app/imports.py\n+++ b/app/imports.py\n@@ -36,2 +36,3 @@\n import os\n+import sys\n import json",
+  "expected_issues": [
+    {
+      "line": 38,
+      "message": "Unused import: sys",
+      "severity": "low"
+    }
+  ]
+}

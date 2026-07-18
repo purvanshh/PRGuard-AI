@@ -1,0 +1,17 @@
+{
+  "id": "fixture_0502",
+  "description": "Path traversal + missing docstring",
+  "diff": "diff --git a/app/logs.py b/app/logs.py\nindex 111..222 100644\n--- a/app/logs.py\n+++ b/app/logs.py\n@@ -43,1 +43,2 @@\n\n+def read_log(log_name):\n     return open(f\"/var/log/{log_name}\").read()",
+  "expected_issues": [
+    {
+      "line": 44,
+      "message": "Function is missing a docstring",
+      "severity": "low"
+    },
+    {
+      "line": 45,
+      "message": "Path traversal vulnerability via unvalidated filename",
+      "severity": "low"
+    }
+  ]
+}

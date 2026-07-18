@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0415",
+  "description": "Unhandled exception in async",
+  "diff": "diff --git a/app/handlers.py b/app/handlers.py\nindex 111..222 100644\n--- a/app/handlers.py\n+++ b/app/handlers.py\n@@ -47,2 +47,3 @@\n async def handler(request):\n+    data = await fetch_data(request.id)\n     return JSONResponse(data)",
+  "expected_issues": [
+    {
+      "line": 49,
+      "message": "Unhandled exception will produce a 500 response",
+      "severity": "medium"
+    }
+  ]
+}

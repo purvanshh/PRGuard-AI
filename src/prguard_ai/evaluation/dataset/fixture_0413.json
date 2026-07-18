@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0413",
+  "description": "Dead code after return",
+  "diff": "diff --git a/app/math.py b/app/math.py\nindex 111..222 100644\n--- a/app/math.py\n+++ b/app/math.py\n@@ -11,2 +11,3 @@\n def compute(x):\n+    return x * 2\n     print(\"done\")",
+  "expected_issues": [
+    {
+      "line": 14,
+      "message": "Unreachable code after return statement",
+      "severity": "low"
+    }
+  ]
+}

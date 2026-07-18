@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0429",
+  "description": "TOCTOU race condition",
+  "diff": "diff --git a/app/files.py b/app/files.py\nindex 111..222 100644\n--- a/app/files.py\n+++ b/app/files.py\n@@ -38,2 +38,3 @@\n if os.path.exists(path):\n+    with open(path) as f:\n         return f.read()",
+  "expected_issues": [
+    {
+      "line": 40,
+      "message": "TOCTOU race condition: file may be deleted between exists and open",
+      "severity": "medium"
+    }
+  ]
+}

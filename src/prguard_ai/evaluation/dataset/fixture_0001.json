@@ -1,0 +1,6 @@
+{
+  "id": "fixture_0001",
+  "description": "Simple import addition",
+  "diff": "diff --git a/app/imports.py b/app/imports.py\nindex 111..222 100644\n--- a/app/imports.py\n+++ b/app/imports.py\n@@ -11,2 +11,2 @@\n import os\n+import json",
+  "expected_issues": []
+}

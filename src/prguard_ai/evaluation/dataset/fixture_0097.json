@@ -1,0 +1,17 @@
+{
+  "id": "fixture_0097",
+  "description": "eval + bare except",
+  "diff": "diff --git a/app/process.py b/app/process.py\nindex 111..222 100644\n--- a/app/process.py\n+++ b/app/process.py\n@@ -14,2 +14,4 @@\n try:\n+    result = eval(data)\n except:\n     pass",
+  "expected_issues": [
+    {
+      "line": 16,
+      "message": "eval() called on potentially user-controlled input",
+      "severity": "high"
+    },
+    {
+      "line": 17,
+      "message": "Bare except clause hides unexpected errors",
+      "severity": "low"
+    }
+  ]
+}

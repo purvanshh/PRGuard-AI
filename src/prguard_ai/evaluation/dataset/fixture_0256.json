@@ -1,0 +1,12 @@
+{
+  "id": "fixture_0256",
+  "description": "Off-by-one in range",
+  "diff": "diff --git a/app/loops.py b/app/loops.py\nindex 111..222 100644\n--- a/app/loops.py\n+++ b/app/loops.py\n@@ -9,2 +9,3 @@\n def process_items(items):\n+    for i in range(len(items) + 1):\n         print(items[i])",
+  "expected_issues": [
+    {
+      "line": 11,
+      "message": "Off-by-one: range(len(items)+1) will cause IndexError",
+      "severity": "high"
+    }
+  ]
+}
