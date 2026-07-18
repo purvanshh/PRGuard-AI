@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Sequence
 
 from prguard_ai.agents.tools import AgentToolExecutor, ToolCallRecord, ToolInvocation
+from prguard_ai.policy.engine import apply_policy_to_issues, filter_diff_by_policy, load_effective_policy
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
 
@@ -22,6 +23,7 @@ class BaseAgent(ABC):
         self.reasoning_trace: List[str] = []
         self.tool_records: List[ToolCallRecord] = []
         self.llm_skipped: bool = False
+        self.policy = load_effective_policy(self.repo_metadata)
 
     @abstractmethod
     def build_tool_plan(self, diff_text: str) -> Sequence[ToolInvocation]:
@@ -36,6 +38,7 @@ class BaseAgent(ABC):
         """Return the aggregate confidence score for the current issue set."""
 
     def run_react_loop(self, diff_text: str) -> AgentOutput:
+        diff_text = filter_diff_by_policy(diff_text, self.policy)
         self.reasoning_trace.append(f"{self.agent_name}: observe diff and collect grounded evidence")
         tool_outputs: Dict[str, Any] = {}
 
@@ -48,7 +51,7 @@ class BaseAgent(ABC):
             )
             self.tool_records.append(ToolCallRecord(invocation=invocation, result=result))
 
-        issues = self.synthesize_issues(diff_text, tool_outputs)
+        issues = apply_policy_to_issues(self.synthesize_issues(diff_text, tool_outputs), self.policy)
         return AgentOutput(
             agent=self.agent_name,
             confidence=self.score_confidence(issues),
