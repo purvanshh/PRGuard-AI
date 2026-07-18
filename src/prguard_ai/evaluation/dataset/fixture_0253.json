@@ -1,7 +1,7 @@
 {
   "id": "fixture_0253",
   "description": "Division by zero",
-  "diff": "diff --git a/app/math.py b/app/math.py\nindex 111..222 100644\n--- a/app/math.py\n+++ b/app/math.py\n@@ -20,2 +20,2 @@\n def divide(a, b):\n+    return a / b",
+  "diff": "diff --git a/app/math.py b/app/math.py\nindex 111..222 100644\n--- a/app/math.py\n+++ b/app/math.py\n@@ -20,1 +20,2 @@\n def divide(a, b):\n+    return a / b",
   "expected_issues": [
     {
       "line": 22,

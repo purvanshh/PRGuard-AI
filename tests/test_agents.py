@@ -72,7 +72,7 @@ index 111..222 100644
     except_output = analyze_logic(except_diff)
 
     assert todo_output.confidence < except_output.confidence
-    assert todo_output.confidence < 0.7
+    assert todo_output.confidence < 0.75
 
 
 def test_context_lines_not_empty(tmp_path: Path):

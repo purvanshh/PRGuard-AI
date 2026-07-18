@@ -1,7 +1,7 @@
 {
   "id": "fixture_0202",
   "description": "None dereference",
-  "diff": "diff --git a/app/users.py b/app/users.py\nindex 111..222 100644\n--- a/app/users.py\n+++ b/app/users.py\n@@ -30,2 +30,2 @@\n def get_name(user):\n+    return user.name.upper()",
+  "diff": "diff --git a/app/users.py b/app/users.py\nindex 111..222 100644\n--- a/app/users.py\n+++ b/app/users.py\n@@ -30,1 +30,2 @@\n def get_name(user):\n+    return user.name.upper()",
   "expected_issues": [
     {
       "line": 32,

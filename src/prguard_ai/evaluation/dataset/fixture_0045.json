@@ -1,7 +1,7 @@
 {
   "id": "fixture_0045",
   "description": "Command injection + long line",
-  "diff": "diff --git a/app/network.py b/app/network.py\nindex 111..222 100644\n--- a/app/network.py\n+++ b/app/network.py\n@@ -4,2 +4,3 @@\n def ping_host(hostname, timeout, retries, verbose, output_format, log_level, use_sudo, resolve_dns):\n+    subprocess.run(f\"ping -c 1 {hostname}\", shell=True, timeout=timeout, capture_output=verbose)\n     return output",
+  "diff": "diff --git a/app/network.py b/app/network.py\nindex 111..222 100644\n--- a/app/network.py\n+++ b/app/network.py\n@@ -4,2 +4,3 @@\n def ping_host(hostname, timeout, retries, verbose, output_format, log_level, use_sudo, resolve_dns):\n+    subprocess.run(f\"ping -c 1 {hostname}\", shell=True, timeout=timeout, capture_output=verbose, check=True, encoding=\"utf-8\")\n     return output",
   "expected_issues": [
     {
       "line": 6,

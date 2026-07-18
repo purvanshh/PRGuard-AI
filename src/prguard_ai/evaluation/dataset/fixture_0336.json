@@ -1,7 +1,7 @@
 {
   "id": "fixture_0336",
   "description": "Pickle + bare except",
-  "diff": "diff --git a/app/load.py b/app/load.py\nindex 111..222 100644\n--- a/app/load.py\n+++ b/app/load.py\n@@ -19,2 +19,4 @@\n try:\n+    data = pickle.loads(payload)\n except:\n     data = {}",
+  "diff": "diff --git a/app/load.py b/app/load.py\nindex 111..222 100644\n--- a/app/load.py\n+++ b/app/load.py\n@@ -19,3 +19,4 @@\n try:\n+    data = pickle.loads(payload)\n except:\n     data = {}",
   "expected_issues": [
     {
       "line": 21,

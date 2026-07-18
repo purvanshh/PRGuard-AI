@@ -9,6 +9,21 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 from prguard_ai.agents.base_agent import BaseAgent
+from prguard_ai.agents.detectors import (
+    detect_bare_except,
+    detect_division_by_zero,
+    detect_eq_none,
+    detect_forgotten_await,
+    detect_infinite_loop,
+    detect_mutable_default,
+    detect_none_dereference,
+    detect_dead_code_after_return,
+    detect_off_by_one,
+    detect_todo,
+    detect_toctou,
+    detect_unhandled_async,
+    detect_variable_shadowing,
+)
 from prguard_ai.agents.tools.schemas import ToolInvocation
 from prguard_ai.analysis.ast_parser import AstSummary, detect_language, summarize_source
 from prguard_ai.analysis.diff_parser import DiffHunk, extract_context_lines, parse_diff
@@ -195,32 +210,41 @@ class LogicAgent(BaseAgent):
 
         issues: List[Issue] = []
         for h in file_hunks:
-            for line in h.lines:
+            for i, line in enumerate(h.lines):
                 if line.line_type != "add":
                     continue
                 text = line.content
-                if "TODO" in text:
-                    issues.append(
-                        Issue(
-                            line=line.new_lineno or 1,
-                            severity="low",
-                            message="TODO present in newly added code.",
-                            evidence=text[:200],
-                            confidence_source="inferred",
-                            file_path=h.file_path,
-                        )
-                    )
-                if "except:" in text:
-                    issues.append(
-                        Issue(
-                            line=line.new_lineno or 1,
-                            severity="medium",
-                            message="Bare except detected; this can hide runtime errors.",
-                            evidence=text[:200],
-                            confidence_source="rule_based",
-                            file_path=h.file_path,
-                        )
-                    )
+                lineno = line.new_lineno or 1
+
+                for detector in [
+                    detect_todo, detect_bare_except, detect_off_by_one,
+                    detect_none_dereference, detect_unhandled_async,
+                    detect_toctou, detect_infinite_loop, detect_mutable_default,
+                    detect_variable_shadowing, detect_eq_none, detect_forgotten_await,
+                    detect_division_by_zero, detect_dead_code_after_return,
+                ]:
+                    result = detector(text, lineno, file_path=h.file_path)
+                    if result is not None:
+                        issues.append(result)
+
+                # Also scan adjacent context lines for function-signature-level issues
+                for offset, delta in [(-1, -1), (1, 1)]:
+                    adj = i + offset
+                    if 0 <= adj < len(h.lines):
+                        adj_line = h.lines[adj]
+                        if adj_line.line_type not in ("add",):
+                            adj_text = adj_line.content
+                            adj_lineno = (line.new_lineno or 1) + delta
+                            for detector in [
+                                detect_mutable_default, detect_variable_shadowing,
+                                detect_eq_none, detect_infinite_loop,
+                                detect_unhandled_async, detect_todo,
+                                detect_bare_except, detect_toctou,
+                                detect_dead_code_after_return,
+                            ]:
+                                result = detector(adj_text, adj_lineno, file_path=h.file_path)
+                                if result is not None:
+                                    issues.append(result)
 
         llm_issues: List[Issue] = []
         if diff_text:

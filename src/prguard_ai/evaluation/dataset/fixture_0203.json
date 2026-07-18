@@ -1,7 +1,7 @@
 {
   "id": "fixture_0203",
   "description": "Null dereference + TODO",
-  "diff": "diff --git a/app/format.py b/app/format.py\nindex 111..222 100644\n--- a/app/format.py\n+++ b/app/format.py\n@@ -48,2 +48,2 @@\n def format_user(user):\n+    return user.name.upper()  # TODO: handle None",
+  "diff": "diff --git a/app/format.py b/app/format.py\nindex 111..222 100644\n--- a/app/format.py\n+++ b/app/format.py\n@@ -48,1 +48,2 @@\n def format_user(user):\n+    return user.name.upper()  # TODO: handle None",
   "expected_issues": [
     {
       "line": 50,

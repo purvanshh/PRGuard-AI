@@ -8,6 +8,19 @@ from pathlib import Path
 from typing import Any, Dict, List, Sequence
 
 from prguard_ai.agents.base_agent import BaseAgent
+from prguard_ai.agents.detectors import (
+    detect_assert_validation,
+    detect_command_injection,
+    detect_eval,
+    detect_hardcoded_secret,
+    detect_md5_hash,
+    detect_path_traversal,
+    detect_pickle_loads,
+    detect_sql_injection,
+    detect_ssrf,
+    detect_template_injection,
+    detect_yaml_load,
+)
 from prguard_ai.agents.tools.schemas import ToolInvocation
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
 from prguard_ai.analysis.diff_parser import DiffHunk, parse_diff
@@ -40,7 +53,7 @@ def _load_prompt() -> str:
     return prompt
 
 
-def detect_sql_injection(line: str) -> bool:
+def _detect_sql_pattern(line: str) -> bool:
     patterns = ["SELECT ", "INSERT ", "UPDATE ", "DELETE "]
     return any(p in line and (" + " in line or f"{p}\"" in line or f"{p}'" in line) for p in patterns)
 
@@ -128,45 +141,38 @@ class SecurityAgent(BaseAgent):
 
         issues: List[Issue] = []
         for h in file_hunks:
-            for line in h.lines:
+            for i, line in enumerate(h.lines):
                 if line.line_type != "add":
                     continue
                 text = line.content
                 lineno = line.new_lineno or 1
 
-                if detect_eval_usage(text):
-                    issues.append(
-                        Issue(
-                            line=lineno,
-                            severity="high",
-                            message="Use of eval/exec detected; this is often unsafe.",
-                            evidence=text[:200],
-                            confidence_source="rule_based",
-                            file_path=h.file_path,
-                        )
-                    )
-                if detect_sql_injection(text):
-                    issues.append(
-                        Issue(
-                            line=lineno,
-                            severity="high",
-                            message="Potential SQL injection pattern (string-concatenated query).",
-                            evidence=text[:200],
-                            confidence_source="rule_based",
-                            file_path=h.file_path,
-                        )
-                    )
-                if detect_hardcoded_secrets(text):
-                    issues.append(
-                        Issue(
-                            line=lineno,
-                            severity="high",
-                            message="Possible hardcoded secret or API key.",
-                            evidence=text[:200],
-                            confidence_source="rule_based",
-                            file_path=h.file_path,
-                        )
-                    )
+                for detector in [
+                    detect_eval, detect_sql_injection, detect_command_injection,
+                    detect_hardcoded_secret, detect_pickle_loads, detect_path_traversal,
+                    detect_ssrf, detect_yaml_load, detect_assert_validation,
+                    detect_md5_hash, detect_template_injection,
+                ]:
+                    result = detector(text, lineno, file_path=h.file_path)
+                    if result is not None:
+                        issues.append(result)
+
+                # Also scan adjacent context lines for patterns in surrounding code
+                for offset, delta in [(-1, -1), (1, 1)]:
+                    adj = i + offset
+                    if 0 <= adj < len(h.lines):
+                        adj_line = h.lines[adj]
+                        if adj_line.line_type not in ("add",):
+                            adj_text = adj_line.content
+                            adj_lineno = (line.new_lineno or 1) + delta
+                            for detector in [
+                                detect_command_injection, detect_path_traversal,
+                                detect_ssrf, detect_assert_validation,
+                                detect_eval, detect_sql_injection,
+                            ]:
+                                result = detector(adj_text, adj_lineno, file_path=h.file_path)
+                                if result is not None:
+                                    issues.append(result)
 
         dep_scan = tool_outputs.get("dependency_scan") or {}
         for suspicious in dep_scan.get("suspicious", []):
@@ -313,7 +319,6 @@ def analyze_security(diff_text: str, repo_metadata: Dict[str, Any] | None = None
 
 __all__ = [
     "analyze_security",
-    "detect_sql_injection",
     "detect_eval_usage",
     "detect_hardcoded_secrets",
     "SecurityAgent",

@@ -1,7 +1,7 @@
 {
   "id": "fixture_0360",
   "description": "Missing module docstring",
-  "diff": "diff --git a/app/module.py b/app/module.py\nindex 111..222 100644\n--- a/app/module.py\n+++ b/app/module.py\n@@ -7,1 +7,1 @@\n\n+from pathlib import Path",
+  "diff": "diff --git a/app/module.py b/app/module.py\nindex 111..222 100644\n--- a/app/module.py\n+++ b/app/module.py\n@@ -7,0 +7,1 @@\n+from pathlib import Path",
   "expected_issues": [
     {
       "line": 7,

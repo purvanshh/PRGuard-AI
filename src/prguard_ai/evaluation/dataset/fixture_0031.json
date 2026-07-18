@@ -1,7 +1,7 @@
 {
   "id": "fixture_0031",
   "description": "Hardcoded secret",
-  "diff": "diff --git a/config/prod.py b/config/prod.py\nindex 111..222 100644\n--- a/config/prod.py\n+++ b/config/prod.py\n@@ -18,2 +18,2 @@\n # configuration\n+SECRET_KEY = \"sk-live-abcdef1234567890\"",
+  "diff": "diff --git a/config/prod.py b/config/prod.py\nindex 111..222 100644\n--- a/config/prod.py\n+++ b/config/prod.py\n@@ -18,1 +18,2 @@\n # configuration\n+SECRET_KEY = \"sk-live-abcdef1234567890\"",
   "expected_issues": [
     {
       "line": 20,

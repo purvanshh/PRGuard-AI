@@ -1,7 +1,7 @@
 {
   "id": "fixture_0422",
   "description": "Multiple imports on one line",
-  "diff": "diff --git a/app/imports.py b/app/imports.py\nindex 111..222 100644\n--- a/app/imports.py\n+++ b/app/imports.py\n@@ -6,1 +6,1 @@\n\n+import os, sys, json, re, math",
+  "diff": "diff --git a/app/imports.py b/app/imports.py\nindex 111..222 100644\n--- a/app/imports.py\n+++ b/app/imports.py\n@@ -6,0 +6,1 @@\n+import os, sys, json, re, math",
   "expected_issues": [
     {
       "line": 7,

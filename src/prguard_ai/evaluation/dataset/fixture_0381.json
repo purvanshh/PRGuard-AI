@@ -1,6 +1,6 @@
 {
   "id": "fixture_0381",
   "description": "Clean formatting fix",
-  "diff": "diff --git a/app/clean.py b/app/clean.py\nindex 111..222 100644\n--- a/app/clean.py\n+++ b/app/clean.py\n@@ -28,2 +28,2 @@\n def clean():\n+    return formatted_result",
+  "diff": "diff --git a/app/clean.py b/app/clean.py\nindex 111..222 100644\n--- a/app/clean.py\n+++ b/app/clean.py\n@@ -28,1 +28,2 @@\n def clean():\n+    return formatted_result",
   "expected_issues": []
 }

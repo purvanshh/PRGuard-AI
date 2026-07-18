@@ -1,6 +1,6 @@
 {
   "id": "fixture_0099",
   "description": "Logging improvement",
-  "diff": "diff --git a/app/logging.py b/app/logging.py\nindex 111..222 100644\n--- a/app/logging.py\n+++ b/app/logging.py\n@@ -19,2 +19,2 @@\n import logging\n+logger = logging.getLogger(__name__)",
+  "diff": "diff --git a/app/logging.py b/app/logging.py\nindex 111..222 100644\n--- a/app/logging.py\n+++ b/app/logging.py\n@@ -19,1 +19,2 @@\n import logging\n+logger = logging.getLogger(__name__)",
   "expected_issues": []
 }

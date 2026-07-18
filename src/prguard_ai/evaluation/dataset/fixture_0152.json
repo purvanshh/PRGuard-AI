@@ -1,7 +1,7 @@
 {
   "id": "fixture_0152",
   "description": "Path traversal + missing docstring",
-  "diff": "diff --git a/app/logs.py b/app/logs.py\nindex 111..222 100644\n--- a/app/logs.py\n+++ b/app/logs.py\n@@ -17,1 +17,2 @@\n\n+def read_log(log_name):\n     return open(f\"/var/log/{log_name}\").read()",
+  "diff": "diff --git a/app/logs.py b/app/logs.py\nindex 111..222 100644\n--- a/app/logs.py\n+++ b/app/logs.py\n@@ -17,0 +17,2 @@\n+def read_log(log_name):\n+    return open(f\"/var/log/{log_name}\").read()",
   "expected_issues": [
     {
       "line": 18,

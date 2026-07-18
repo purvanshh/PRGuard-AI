@@ -1,6 +1,6 @@
 {
   "id": "fixture_0127",
   "description": "Safe parameterized query",
-  "diff": "diff --git a/app/queries.py b/app/queries.py\nindex 111..222 100644\n--- a/app/queries.py\n+++ b/app/queries.py\n@@ -13,2 +13,2 @@\n def find_user(email):\n+    return db.execute(\"SELECT * FROM users WHERE email = %s\", (email,))",
+  "diff": "diff --git a/app/queries.py b/app/queries.py\nindex 111..222 100644\n--- a/app/queries.py\n+++ b/app/queries.py\n@@ -13,1 +13,2 @@\n def find_user(email):\n+    return db.execute(\"SELECT * FROM users WHERE email = %s\", (email,))",
   "expected_issues": []
 }

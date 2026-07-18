@@ -13,20 +13,38 @@ NUM_FIXTURES = 520
 
 def _diff(before, added, after, old_line, file="app/controller.py"):
     lines_before = [l for l in before.split("\n") if l] if before else []
-    lines_after = [l for l in after.split("\n") if l] if after else []
+    added_lines = added.split("\n") if "\n" in added else [added]
+    after_lines = [l for l in after.split("\n") if l] if after else []
+
+    if not lines_before and after_lines:
+        all_added = added_lines + after_lines
+        context_after = []
+    else:
+        all_added = added_lines
+        context_after = after_lines
+
     start = old_line - len(lines_before)
+    old_count = len(lines_before) + len(context_after)
+    if old_count == 0:
+        old_count = 0
+    new_lines_total = len(lines_before) + len(all_added) + len(context_after)
+    new_count = max(1, new_lines_total)
+
     hdr = (
         f"diff --git a/{file} b/{file}\n"
         f"index 111..222 100644\n"
         f"--- a/{file}\n"
         f"+++ b/{file}\n"
-        f"@@ -{start},{len(lines_before)+1} +{start},{len(lines_before)+1+len(lines_after)} @@\n"
+        f"@@ -{start},{old_count} +{start},{new_count} @@\n"
     )
-    body = "\n".join(f" {l}" for l in lines_before) if lines_before else ""
-    body += f"\n+{added}"
-    if lines_after:
-        body += "\n" + "\n".join(f" {l}" for l in lines_after)
-    return hdr + body
+    parts = []
+    for l in lines_before:
+        parts.append(f" {l}")
+    for l in all_added:
+        parts.append(f"+{l}")
+    for l in context_after:
+        parts.append(f" {l}")
+    return hdr + "\n".join(parts)
 
 
 FIXTURE_TEMPLATES = [
@@ -430,7 +448,7 @@ FIXTURE_TEMPLATES = [
         "desc": "Command injection + long line",
         "diff": lambda n: _diff(
             "def ping_host(hostname, timeout, retries, verbose, output_format, log_level, use_sudo, resolve_dns):",
-            '    subprocess.run(f"ping -c 1 {hostname}", shell=True, timeout=timeout, capture_output=verbose)',
+            '    subprocess.run(f"ping -c 1 {hostname}", shell=True, timeout=timeout, capture_output=verbose, check=True, encoding="utf-8")',
             "    return output",
             n, "app/network.py"
         ),

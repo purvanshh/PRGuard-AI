@@ -1,7 +1,7 @@
 {
   "id": "fixture_0126",
   "description": "CamelCase function name",
-  "diff": "diff --git a/app/naming.py b/app/naming.py\nindex 111..222 100644\n--- a/app/naming.py\n+++ b/app/naming.py\n@@ -40,1 +40,2 @@\n\n+def getDataFromAPI():\n     \"\"\"Fetch data.\"\"\"",
+  "diff": "diff --git a/app/naming.py b/app/naming.py\nindex 111..222 100644\n--- a/app/naming.py\n+++ b/app/naming.py\n@@ -40,0 +40,2 @@\n+def getDataFromAPI():\n+    \"\"\"Fetch data.\"\"\"",
   "expected_issues": [
     {
       "line": 41,

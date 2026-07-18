@@ -1,7 +1,7 @@
 {
   "id": "fixture_0055",
   "description": "eval + bare except",
-  "diff": "diff --git a/app/process.py b/app/process.py\nindex 111..222 100644\n--- a/app/process.py\n+++ b/app/process.py\n@@ -4,2 +4,4 @@\n try:\n+    result = eval(data)\n except:\n     pass",
+  "diff": "diff --git a/app/process.py b/app/process.py\nindex 111..222 100644\n--- a/app/process.py\n+++ b/app/process.py\n@@ -4,3 +4,4 @@\n try:\n+    result = eval(data)\n except:\n     pass",
   "expected_issues": [
     {
       "line": 6,

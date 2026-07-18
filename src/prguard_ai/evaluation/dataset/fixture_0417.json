@@ -1,7 +1,7 @@
 {
   "id": "fixture_0417",
   "description": "Missing function docstring",
-  "diff": "diff --git a/app/math.py b/app/math.py\nindex 111..222 100644\n--- a/app/math.py\n+++ b/app/math.py\n@@ -5,1 +5,2 @@\n\n+def calculate(x, y):\n     return x + y",
+  "diff": "diff --git a/app/math.py b/app/math.py\nindex 111..222 100644\n--- a/app/math.py\n+++ b/app/math.py\n@@ -5,0 +5,2 @@\n+def calculate(x, y):\n+    return x + y",
   "expected_issues": [
     {
       "line": 6,
