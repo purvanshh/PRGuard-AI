@@ -27,12 +27,16 @@ MAX_TOKENS_PER_AGENT = 2000
 
 
 def _load_prompt() -> str:
-    if PROMPT_PATH.exists():
-        return PROMPT_PATH.read_text(encoding="utf-8")
-    return (
+    from prguard_ai.prompts import load_prompt
+
+    prompt, _version = load_prompt(
+        "logic",
+        fallback=(
         "You are a code review assistant focusing on LOGICAL CORRECTNESS. "
         "Respond with a JSON array of issues."
+        ),
     )
+    return prompt
 
 
 def _build_ast_summary_for_hunks(hunks: List[DiffHunk]) -> AstSummary | None:

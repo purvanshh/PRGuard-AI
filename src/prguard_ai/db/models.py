@@ -124,6 +124,21 @@ class CalibrationSnapshot(Base):
     created_at = Column(Float, nullable=False)
 
 
+class ModelRun(Base):
+    """Registry entry for the model and prompt version used on a PR."""
+
+    __tablename__ = "model_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pr_id = Column(String(255), nullable=False, index=True)
+    agent = Column(String(100), nullable=False, index=True)
+    model_version = Column(String(255), nullable=False)
+    prompt_version = Column(String(255), nullable=False)
+    config_json = Column(Text, nullable=False)
+    variant = Column(String(100), nullable=True)
+    created_at = Column(Float, nullable=False)
+
+
 # ORM model aliases to satisfy system terminology requirements
 AuditLog = AgentLog
 TokenUsage = LLMUsage
@@ -138,6 +153,7 @@ __all__ = [
     "ABTestAssignment",
     "ShadowRun",
     "CalibrationSnapshot",
+    "ModelRun",
     "AuditLog",
     "TokenUsage",
 ]

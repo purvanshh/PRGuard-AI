@@ -49,12 +49,16 @@ COLOR_KEYWORDS = {
 
 
 def _load_prompt() -> str:
-    if PROMPT_PATH.exists():
-        return PROMPT_PATH.read_text(encoding="utf-8")
-    return (
+    from prguard_ai.prompts import load_prompt
+
+    prompt, _version = load_prompt(
+        "style",
+        fallback=(
         "You are a code review assistant focusing exclusively on STYLE and CONSISTENCY. "
         "Respond with a JSON array of issues."
+        ),
     )
+    return prompt
 
 
 def _build_llm_input(diff_text: str, repo_examples: List[str]) -> str:

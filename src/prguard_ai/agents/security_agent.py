@@ -28,12 +28,16 @@ SUSPECT_KEYWORDS = ["eval(", "exec(", "subprocess.Popen", "os.system"]
 
 
 def _load_prompt() -> str:
-    if PROMPT_PATH.exists():
-        return PROMPT_PATH.read_text(encoding="utf-8")
-    return (
+    from prguard_ai.prompts import load_prompt
+
+    prompt, _version = load_prompt(
+        "security",
+        fallback=(
         "You are a code review assistant focusing on SECURITY. "
         "Respond with a JSON array of issues."
+        ),
     )
+    return prompt
 
 
 def detect_sql_injection(line: str) -> bool:
