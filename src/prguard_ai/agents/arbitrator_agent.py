@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Dict, Iterable, List, Tuple
+import math
+import re
+from collections import defaultdict
+from typing import Dict, Iterable, List
 
-from prguard_ai.confidence.scoring_engine import aggregate_confidence, calculate_agent_confidence
+from prguard_ai.confidence.scoring_engine import aggregate_confidence
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 from prguard_ai.schemas.pr_report import PullRequestReport
 from prguard_ai.schemas.context import ReviewContext
@@ -47,11 +50,87 @@ def detect_agent_disagreements(outputs: Iterable[AgentOutput]) -> List[str]:
     return disagreements
 
 
+def _issue_tokens(issue: Issue) -> set[str]:
+    text = f"{issue.file_path or ''} {issue.message} {issue.evidence}".lower()
+    return {token for token in re.findall(r"[a-z0-9_]+", text) if len(token) > 2}
+
+
+def _issue_similarity(left: Issue, right: Issue) -> float:
+    line_score = 0.0
+    if (left.file_path or "") == (right.file_path or ""):
+        distance = abs(left.line - right.line)
+        line_score = 1.0 if distance == 0 else max(0.0, 1.0 - (distance / 5.0))
+
+    left_tokens = _issue_tokens(left)
+    right_tokens = _issue_tokens(right)
+    if not left_tokens and not right_tokens:
+        text_score = 0.0
+    else:
+        text_score = len(left_tokens & right_tokens) / max(len(left_tokens | right_tokens), 1)
+    return (line_score * 0.55) + (text_score * 0.45)
+
+
+def deduplicate_issues(issues: Iterable[Issue], threshold: float = 0.72) -> List[Issue]:
+    """Cluster semantically similar issues and keep the strongest representative."""
+    clusters: List[List[Issue]] = []
+    for issue in issues:
+        for cluster in clusters:
+            if any(_issue_similarity(issue, existing) >= threshold for existing in cluster):
+                cluster.append(issue)
+                break
+        else:
+            clusters.append([issue])
+
+    severity_rank = {"high": 3, "medium": 2, "low": 1}
+    merged: List[Issue] = []
+    for cluster in clusters:
+        cluster.sort(
+            key=lambda item: (
+                severity_rank.get(item.severity.lower(), 0),
+                len(item.evidence),
+                len(item.message),
+            ),
+            reverse=True,
+        )
+        winner = cluster[0].model_copy()
+        if len(cluster) > 1:
+            sources = sorted({item.confidence_source for item in cluster})
+            winner.confidence_source = "+".join(sources)
+            winner.message = f"{winner.message} ({len(cluster)} agents/findings corroborated this.)"
+        merged.append(winner)
+
+    return sorted(merged, key=lambda item: (item.file_path or "", item.line, item.severity))
+
+
+def resolve_conflicts(outputs: Iterable[AgentOutput]) -> List[str]:
+    """Identify same-location severity disagreements for the final review narrative."""
+    by_location: Dict[tuple[str, int], List[tuple[str, Issue]]] = defaultdict(list)
+    for output in outputs:
+        for issue in output.issues:
+            by_location[(issue.file_path or "", issue.line)].append((output.agent, issue))
+
+    conflicts: List[str] = []
+    for (file_path, line), items in by_location.items():
+        severities = {issue.severity for _, issue in items}
+        if len(items) > 1 and len(severities) > 1:
+            agent_bits = ", ".join(f"{agent}:{issue.severity}" for agent, issue in items)
+            location = f"{file_path}:{line}" if file_path else f"line {line}"
+            conflicts.append(f"Resolved severity conflict at {location} across {agent_bits}.")
+    return conflicts
+
+
+def calibrate_confidence(raw_score: float, slope: float = 4.0, midpoint: float = 0.58) -> float:
+    """Apply a lightweight Platt-style calibration curve to aggregate confidence."""
+    raw = max(0.0, min(1.0, raw_score))
+    calibrated = 1.0 / (1.0 + math.exp(-slope * (raw - midpoint)))
+    return round(max(0.0, min(1.0, calibrated)), 4)
+
+
 def aggregate_confidence_with_weights(outputs: Iterable[AgentOutput]) -> float:
     """
     Wrapper over aggregate_confidence for clarity.
     """
-    return aggregate_confidence(outputs)
+    return calibrate_confidence(aggregate_confidence(outputs))
 
 
 def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullRequestReport:
@@ -78,8 +157,9 @@ def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullR
 
     overall_confidence = aggregate_confidence_with_weights(successful_outputs)
 
-    issues: List[Issue] = [issue for output in successful_outputs for issue in output.issues]
-    disagreements = detect_agent_disagreements(successful_outputs)
+    raw_issues: List[Issue] = [issue for output in successful_outputs for issue in output.issues]
+    issues = deduplicate_issues(raw_issues)
+    disagreements = detect_agent_disagreements(successful_outputs) + resolve_conflicts(successful_outputs)
 
     report = PullRequestReport(
         overall_confidence=overall_confidence,
@@ -91,5 +171,11 @@ def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullR
     return report
 
 
-__all__ = ["arbitrate_confidence", "detect_agent_disagreements"]
-
+__all__ = [
+    "arbitrate_confidence",
+    "aggregate_confidence_with_weights",
+    "calibrate_confidence",
+    "deduplicate_issues",
+    "detect_agent_disagreements",
+    "resolve_conflicts",
+]

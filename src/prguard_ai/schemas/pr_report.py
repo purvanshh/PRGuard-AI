@@ -38,26 +38,16 @@ class PullRequestReport(BaseModel):
         lines.append(f"**Confidence Score:** {self.overall_confidence:.2f}")
         lines.append("")
 
-        sections: Dict[str, List[Issue]] = {"style": [], "logic": [], "security": []}
-        for output in self.agent_outputs:
-            agent_name = output.agent.lower()
-            if agent_name in sections:
-                sections[agent_name].extend(output.issues)
-
-        def _render_section(title: str, issues: List[Issue]) -> None:
-            lines.append(f"### {title}")
-            if not issues:
-                lines.append("_No issues detected._")
-            else:
-                for issue in issues:
-                    lines.append(
-                        f"- `{issue.severity.upper()}` (line {issue.line}): {issue.message}"
-                    )
-            lines.append("")
-
-        _render_section("Style", sections["style"])
-        _render_section("Logic", sections["logic"])
-        _render_section("Security", sections["security"])
+        lines.append("### Findings")
+        if not self.issues:
+            lines.append("_No issues detected._")
+        else:
+            for issue in self.issues:
+                location = f"{issue.file_path}:{issue.line}" if issue.file_path else f"line {issue.line}"
+                lines.append(f"- `{issue.severity.upper()}` `{location}`: {issue.message}")
+                lines.append(f"  - Evidence: {issue.evidence}")
+                lines.append(f"  - Confidence basis: {issue.confidence_source}")
+        lines.append("")
 
         lines.append("### Disagreement Summary")
         if self.disagreements:
@@ -79,4 +69,3 @@ class PullRequestReport(BaseModel):
 
 
 __all__ = ["PullRequestReport"]
-
