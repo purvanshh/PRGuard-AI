@@ -36,7 +36,7 @@ The system is built for production: asynchronous task queues with retry logic, P
 - [Repository Structure](#repository-structure)
 - [Security](#security)
 - [Evaluation](#evaluation)
-- [Roadmap](#roadmap)
+- [Project Status](#project-status)
 - [Contributing](#contributing)
 - [License](#license)
 
@@ -165,7 +165,7 @@ Every finding carries a `confidence_source` tag that maps to a numeric weight:
 
 ## Production Features
 
-PRGuard AI has been built across ten production-oriented phases:
+PRGuard AI has been built across fifteen production-oriented phases:
 
 | Phase | Feature | Description |
 |-------|---------|-------------|
@@ -179,6 +179,11 @@ PRGuard AI has been built across ten production-oriented phases:
 | 8 | Distributed Tracing & Observability | OTel trace propagation across Celery tasks, correlation ID in logs, Grafana dashboard (p95 latency, queue depth, agent errors, circuit breaker), AlertManager rules |
 | 9 | Security Hardening | Secret redaction, `public_error_code()`, strict Pydantic webhook payload validation, path traversal blocking, `git clone --config core.hooksPath=/dev/null` |
 | 10 | Human-in-the-Loop | `HumanReviewQueue` with confidence threshold auto-posting, Flask approval dashboard, escalation tracking, Alembic migration |
+| 11 | Policy Engine | `.prguard.yml` parser, org-level inheritance, ignored paths, severity thresholds, required reviewers, critical path elevation |
+| 12 | Online Feedback Loop | GitHub reaction collection, finding-linked feedback storage, confidence recalibration, A/B routing, shadow-run records |
+| 13 | Prompt Management | Versioned prompts, env-based feature flags, canary rollout helpers, model-run registry |
+| 14 | Production Deployability | Helm chart, Kubernetes probes, ConfigMap/Secret wiring, resource requests/limits, Terraform AWS starter module |
+| 15 | Final Polish | Evaluation report v2, demo checklist, submission notes, and architecture decision records |
 
 ---
 
@@ -435,27 +440,6 @@ results = run_evaluation_suite(Path("src/prguard_ai/evaluation/dataset/"))
 
 ---
 
-## Roadmap
-
-- [x] Foundation Repair — Docker Compose, sandbox fix, TOCTOU race, dead-letter queue, idempotent reviews
-- [x] Evaluation Infrastructure — semantic issue matching, confidence intervals, per-agent metrics, 500+ dataset fixtures
-- [x] Real Agents with Tools — BaseAgent ABC with ReAct loop, 7 tools
-- [x] Real Coordinator — LLM-powered moderation, steering questions, convergence detection
-- [x] Real Arbitrator — semantic dedup, conflict resolution, Platt scaling calibration
-- [x] Model Routing & Cost Optimization — ModelRouter, SemanticCache, fallback chain
-- [x] Scalability — per-repo rate limiting, diff chunking, separate broker/data Redis
-- [x] Distributed Tracing & Observability — OTel propagation, Grafana dashboard, AlertManager rules
-- [x] Security Hardening — secret redaction, strict validation, path traversal blocking
-- [x] Human-in-the-Loop — review queue, confidence auto-posting, Flask dashboard, escalation
-- [x] Test coverage at 81% across 237 tests (threshold enforced at 70%)
-- [ ] Phase 11: Policy Engine — `.prguard.yml` parser, per-repo rules, org-level inheritance, enforcement
-- [ ] Phase 12: Online Evaluation — GitHub reaction tracking, A/B testing, shadow deployments
-- [ ] Phase 13: Prompt Management — versioned prompts, feature flags, canary deployments, model registry
-- [ ] Phase 14: Kubernetes Deployment — Helm chart, Terraform module, production runbook
-- [ ] Phase 15: Final Evaluation & Submission — 500+ PR eval run, demo video, Grafana screenshots, ADRs
-
----
-
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines, branching conventions, and pull request requirements.
@@ -470,7 +454,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines, branching con
 
 <div align="center">
 
-Built by [Purvansh Sahu](https://github.com/purvanshh) &nbsp;|&nbsp; 3rd Year CS at Scaler School of Technology + BITS Pilani &nbsp;|&nbsp; ML Research Intern at IIT Madras
+Built by [Purvansh Sahu](https://github.com/purvanshh) &nbsp;|&nbsp; 4th Year CS at Scaler School of Technology + BITS Pilani &nbsp;|&nbsp; ML Research Intern at IIT Madras
 
 LLM backend powered by NVIDIA NIM
 
