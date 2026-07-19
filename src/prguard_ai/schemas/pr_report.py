@@ -18,6 +18,10 @@ class PullRequestReport(BaseModel):
         le=1.0,
         description="Aggregated confidence across all agents.",
     )
+    confidence_interval: tuple[float, float] | None = Field(
+        default=None,
+        description="Lower and upper calibrated confidence bounds.",
+    )
     agent_outputs: List[AgentOutput] = Field(
         default_factory=list, description="Per-agent structured outputs."
     )
@@ -35,7 +39,12 @@ class PullRequestReport(BaseModel):
         lines: List[str] = []
         lines.append("## PRGuard AI Review")
         lines.append("")
-        lines.append(f"**Confidence Score:** {self.overall_confidence:.2f}")
+        if self.confidence_interval:
+            lower, upper = self.confidence_interval
+            margin = max(self.overall_confidence - lower, upper - self.overall_confidence)
+            lines.append(f"**Confidence Score:** {self.overall_confidence:.2f} +/- {margin:.2f}")
+        else:
+            lines.append(f"**Confidence Score:** {self.overall_confidence:.2f}")
         lines.append("")
 
         lines.append("### Findings")

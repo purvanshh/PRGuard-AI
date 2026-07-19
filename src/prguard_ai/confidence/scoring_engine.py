@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Dict
+import math
+from dataclasses import dataclass
+from statistics import NormalDist
+from typing import Iterable, Dict, Sequence
 
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
 
-CONFIDENCE_WEIGHTS: Dict[str, float] = {
+DEFAULT_CONFIDENCE_WEIGHTS: Dict[str, float] = {
     "rule_based": 0.9,
     "llm_reasoning": 0.6,
     "refined": 0.7,
@@ -18,11 +21,117 @@ SEVERITY_CONFIDENCE_WEIGHTS: Dict[str, float] = {
     "medium": 0.65,
     "high": 0.85,
 }
+LEARNED_CONFIDENCE_WEIGHTS: Dict[str, float] = dict(DEFAULT_CONFIDENCE_WEIGHTS)
+
+
+@dataclass(frozen=True)
+class CalibratedConfidence:
+    """Calibrated probability plus a Wilson 95% confidence interval."""
+
+    probability: float
+    lower: float
+    upper: float
+    sample_count: int
+
+    @property
+    def margin(self) -> float:
+        return round(max(self.probability - self.lower, self.upper - self.probability), 4)
+
+
+def _clamp(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _sigmoid(value: float) -> float:
+    return 1.0 / (1.0 + math.exp(-value))
+
+
+def fit_platt_scaling(
+    samples: Sequence[tuple[float, int]],
+    *,
+    iterations: int = 400,
+    learning_rate: float = 0.05,
+) -> tuple[float, float]:
+    """Fit a tiny logistic calibration model from human feedback samples."""
+    if not samples:
+        return 1.0, 0.0
+
+    slope = 1.0
+    intercept = 0.0
+    prepared = [(_clamp(score), 1 if label else 0) for score, label in samples]
+    for _ in range(iterations):
+        grad_slope = 0.0
+        grad_intercept = 0.0
+        for score, label in prepared:
+            pred = _sigmoid(slope * score + intercept)
+            error = pred - label
+            grad_slope += error * score
+            grad_intercept += error
+        count = float(len(prepared))
+        slope -= learning_rate * grad_slope / count
+        intercept -= learning_rate * grad_intercept / count
+    return round(slope, 6), round(intercept, 6)
+
+
+def calibrate_confidence(
+    raw_score: float,
+    *,
+    samples: Sequence[tuple[float, int]] | None = None,
+    slope: float | None = None,
+    intercept: float | None = None,
+) -> float:
+    """Convert a raw score into an empirically calibrated probability."""
+    if samples:
+        slope, intercept = fit_platt_scaling(samples)
+    if slope is None:
+        slope = 1.0
+    if intercept is None:
+        intercept = 0.0
+    return round(_clamp(_sigmoid(slope * _clamp(raw_score) + intercept)), 4)
+
+
+def confidence_interval(probability: float, sample_count: int, confidence: float = 0.95) -> tuple[float, float]:
+    """Return a Wilson score interval for calibrated finding correctness."""
+    probability = _clamp(probability)
+    if sample_count <= 0:
+        return 0.0, 1.0
+    z = NormalDist().inv_cdf(1 - (1 - confidence) / 2)
+    n = float(sample_count)
+    denominator = 1 + z * z / n
+    center = (probability + z * z / (2 * n)) / denominator
+    spread = z * math.sqrt((probability * (1 - probability) + z * z / (4 * n)) / n) / denominator
+    return round(_clamp(center - spread), 4), round(_clamp(center + spread), 4)
+
+
+def calibrated_confidence(
+    raw_score: float,
+    *,
+    sample_count: int = 0,
+    samples: Sequence[tuple[float, int]] | None = None,
+    slope: float | None = None,
+    intercept: float | None = None,
+) -> CalibratedConfidence:
+    probability = calibrate_confidence(raw_score, samples=samples, slope=slope, intercept=intercept)
+    if samples is not None:
+        sample_count = len(samples)
+    lower, upper = confidence_interval(probability, sample_count)
+    return CalibratedConfidence(probability, lower, upper, sample_count)
 
 
 def _weight_for_source(source: str) -> float:
     """Return a numeric weight for a confidence source label."""
-    return CONFIDENCE_WEIGHTS.get(source, CONFIDENCE_WEIGHTS["inferred"])
+    return LEARNED_CONFIDENCE_WEIGHTS.get(source, LEARNED_CONFIDENCE_WEIGHTS["inferred"])
+
+
+def update_learned_weights(feedback: Iterable[tuple[str, int]]) -> Dict[str, float]:
+    """Update source weights from human finding feedback."""
+    grouped: Dict[str, list[int]] = {}
+    for source, accepted in feedback:
+        grouped.setdefault(source, []).append(1 if accepted else 0)
+    for source, labels in grouped.items():
+        if labels:
+            LEARNED_CONFIDENCE_WEIGHTS[source] = round(_clamp(sum(labels) / len(labels)), 4)
+    return dict(LEARNED_CONFIDENCE_WEIGHTS)
 
 
 def estimate_issue_confidence(
@@ -99,4 +208,30 @@ def aggregate_confidence(outputs: Iterable[AgentOutput]) -> float:
     return base_avg
 
 
-__all__ = ["calculate_agent_confidence", "aggregate_confidence", "estimate_issue_confidence"]
+def aggregate_calibrated_confidence(
+    outputs: Iterable[AgentOutput],
+    *,
+    sample_count: int = 0,
+    slope: float | None = None,
+    intercept: float | None = None,
+) -> CalibratedConfidence:
+    return calibrated_confidence(
+        aggregate_confidence(outputs),
+        sample_count=sample_count,
+        slope=slope,
+        intercept=intercept,
+    )
+
+
+__all__ = [
+    "CalibratedConfidence",
+    "calculate_agent_confidence",
+    "aggregate_confidence",
+    "aggregate_calibrated_confidence",
+    "calibrate_confidence",
+    "calibrated_confidence",
+    "confidence_interval",
+    "estimate_issue_confidence",
+    "fit_platt_scaling",
+    "update_learned_weights",
+]
