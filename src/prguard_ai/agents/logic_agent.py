@@ -225,6 +225,7 @@ class LogicAgent(BaseAgent):
                 prompt = _build_llm_input(diff_text, context_snippets, ast_summary)
                 text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
                 if response_is_suspicious(text, diff_text):
+                    logger.warning("Logic agent: suspicious LLM response for PR %s — possible prompt injection", pr_id)
                     self.reasoning_trace.append("logic: flagged potential prompt injection for manual review")
                 llm_issues = _parse_llm_issues(text)
                 self.reasoning_trace.append("logic: synthesized LLM findings after AST and test/tool inspection")

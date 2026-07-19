@@ -73,9 +73,9 @@ def process_initial_agent_outputs(
     pr_number: int,
 ) -> dict:
     """Store initial agent results and start the first refinement chord."""
-    style_output = AgentOutput(**outputs[0])
-    logic_output = AgentOutput(**outputs[1])
-    security_output = AgentOutput(**outputs[2])
+    style_output = AgentOutput.model_validate(outputs[0])
+    logic_output = AgentOutput.model_validate(outputs[1])
+    security_output = AgentOutput.model_validate(outputs[2])
 
     ctx = ReviewContext(
         pr_id=pr_id,
@@ -123,7 +123,7 @@ def process_refinement_outputs(
         out_dict = res.get("refined_output")
         if not out_dict:
             continue
-        output = AgentOutput(**out_dict)
+        output = AgentOutput.model_validate(out_dict)
         prev_output = ctx.agent_outputs.get(output.agent)
 
         if msg.strip():

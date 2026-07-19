@@ -4,10 +4,22 @@ import json
 import logging
 from typing import Dict, List
 
+from pydantic import TypeAdapter, validate_call
+
 from prguard_ai.schemas.context import ReviewContext
 from prguard_ai.llm.client import generate_analysis, extract_json_obj_from_llm_response
 
 logger = logging.getLogger(__name__)
+
+# Validator for coordinator LLM response structure
+_coordinator_response_adapter: TypeAdapter[dict[str, list[str]]] | None = None
+
+
+def _get_coordinator_adapter() -> TypeAdapter[dict[str, list[str]]]:
+    global _coordinator_response_adapter
+    if _coordinator_response_adapter is None:
+        _coordinator_response_adapter = TypeAdapter(dict[str, list[str]])
+    return _coordinator_response_adapter
 
 
 class CoordinatorAgent:
@@ -65,6 +77,7 @@ class CoordinatorAgent:
                 pr_id=context.repo_metadata.get("pr_id") if context.repo_metadata else context.pr_id,
             )
             data = json.loads(extract_json_obj_from_llm_response(text))
+            _get_coordinator_adapter().validate_python(data)
             critiques = [str(item).strip() for item in data.get("critiques", []) if str(item).strip()]
             steering = [str(item).strip() for item in data.get("steering_questions", []) if str(item).strip()]
             if critiques or steering:

@@ -167,6 +167,7 @@ class SecurityAgent(BaseAgent):
                 prompt = _load_prompt() + "\n\n--- Diff ---\n" + wrap_diff(diff_text) + "\n\n--- Tool context ---\n" + extra_context
                 text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
                 if response_is_suspicious(text, diff_text):
+                    logger.warning("Security agent: suspicious LLM response for PR %s — possible prompt injection", pr_id)
                     self.reasoning_trace.append("security: flagged potential prompt injection for manual review")
                 llm_issues = _parse_llm_issues(text)
                 self.reasoning_trace.append("security: synthesized LLM findings after dependency and history checks")

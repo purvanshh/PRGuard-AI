@@ -346,6 +346,7 @@ class StyleAgent(BaseAgent):
                 prompt = _build_llm_input(diff_text, repo_examples)
                 text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
                 if response_is_suspicious(text, diff_text):
+                    logger.warning("Style agent: suspicious LLM response for PR %s — possible prompt injection", pr_id)
                     self.reasoning_trace.append("style: flagged potential prompt injection for manual review")
                 llm_issues = _parse_llm_issues(text)
                 _attach_file_paths_to_llm_issues(llm_issues, relevant_hunks)

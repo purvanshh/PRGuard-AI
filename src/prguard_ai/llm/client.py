@@ -259,7 +259,7 @@ def generate_analysis(
                     "max_tokens": requested,
                     "temperature": temperature,
                 }
-                if expect_json and not settings.nvidia_api_key:
+                if expect_json:
                     request_kwargs["response_format"] = {"type": "json_object"}
                 response = llm_breaker.call(client.chat.completions.create, **request_kwargs)
                 message = response.choices[0].message.content or ""

@@ -31,6 +31,11 @@ DEAD_LETTERED_TASKS = Counter(
     "Total number of tasks written to the dead-letter queue",
 )
 
+PROMPT_INJECTION_DETECTED = Counter(
+    "prguard_prompt_injection_detected_total",
+    "Total number of prompt injection attempts detected in diff text",
+)
+
 # ---------------------------------------------------------------------------
 # Histograms
 # ---------------------------------------------------------------------------

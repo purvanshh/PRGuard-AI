@@ -22,8 +22,9 @@ def test_injection_detected_and_empty_response_flagged():
     inspection = inspect_prompt_injection(diff)
 
     assert inspection.suspicious is True
+    # Any response (even non-empty) is flagged when injection patterns exist
     assert response_is_suspicious("[]", diff) is True
-    assert response_is_suspicious('[{"line":1}]', diff) is False
+    assert response_is_suspicious('[{"line":1}]', diff) is True
 
 
 def test_sanitize_diff_preserves_normal_diff_text():

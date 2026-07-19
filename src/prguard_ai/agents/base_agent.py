@@ -139,7 +139,9 @@ class BaseAgent(ABC):
 
         raw, _usage = generate_analysis(prompt, max_tokens=max_tokens, pr_id=pr_id)
         extracted = extract_json_obj_from_llm_response(raw) if expect_object else extract_json_from_llm_response(raw)
-        return json.loads(extracted)
+        result = json.loads(extracted)
+        assert isinstance(result, (list, dict)), f"_prompt_json expected list or dict, got {type(result)}"
+        return result
 
     def refine_with_tools(self, ctx: Any, agent_output: AgentOutput) -> tuple[str, AgentOutput]:
         """Run refinement with tool augmentation.
