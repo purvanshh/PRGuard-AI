@@ -23,9 +23,10 @@ from prguard_ai.agents.detectors import (
 )
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
 from prguard_ai.analysis.diff_parser import DiffHunk, parse_diff
-from prguard_ai.llm.client import extract_json_from_llm_response, generate_analysis
+from prguard_ai.llm.client import generate_analysis, parse_agent_issues
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 from prguard_ai.schemas.context import ReviewContext
+from prguard_ai.security.prompt_injection import response_is_suspicious, wrap_diff
 
 from prguard_ai.config.settings import settings
 
@@ -70,32 +71,11 @@ def detect_hardcoded_secrets(line: str) -> bool:
 
 
 def _parse_llm_issues(raw: str) -> List[Issue]:
-    clean = extract_json_from_llm_response(raw)
     try:
-        data = json.loads(clean)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse LLM security response as JSON. Raw: %s", raw[:500])
+        return parse_agent_issues(raw)[:20]
+    except Exception:
+        logger.warning("Failed to parse structured LLM security response. Raw: %s", raw[:500], exc_info=True)
         return []
-    if not isinstance(data, list):
-        logger.warning("LLM security response is not a JSON array. Raw: %s", raw[:500])
-        return []
-    out: List[Issue] = []
-    for item in data:
-        if len(out) >= 20:
-            logger.warning("Security agent hit maximum issue limit (20). Skipping remaining issues.")
-            break
-        try:
-            out.append(Issue.validate_and_sanitize(item))
-        except Exception as exc:
-            logger.warning(
-                "Parsing failure: failed to validate Issue from item %s. Exception: %s. Raw LLM response (truncated): %s",
-                item,
-                exc,
-                raw[:500],
-                exc_info=True
-            )
-            continue
-    return out
 
 
 class SecurityAgent(BaseAgent):
@@ -184,8 +164,10 @@ class SecurityAgent(BaseAgent):
 
             try:
                 extra_context = json.dumps(tool_outputs, indent=2)[:2000]
-                prompt = _load_prompt() + "\n\n--- Diff ---\n" + diff_text + "\n\n--- Tool context ---\n" + extra_context
+                prompt = _load_prompt() + "\n\n--- Diff ---\n" + wrap_diff(diff_text) + "\n\n--- Tool context ---\n" + extra_context
                 text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
+                if response_is_suspicious(text, diff_text):
+                    self.reasoning_trace.append("security: flagged potential prompt injection for manual review")
                 llm_issues = _parse_llm_issues(text)
                 self.reasoning_trace.append("security: synthesized LLM findings after dependency and history checks")
             except (CircuitBreakerError, TokenBudgetExceededError) as exc:

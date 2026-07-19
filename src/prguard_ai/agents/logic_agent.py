@@ -27,9 +27,10 @@ from prguard_ai.agents.detectors import (
 from prguard_ai.analysis.ast_parser import AstSummary, detect_language, summarize_source
 from prguard_ai.analysis.diff_parser import DiffHunk, extract_context_lines, parse_diff
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
-from prguard_ai.llm.client import extract_json_from_llm_response, generate_analysis
+from prguard_ai.llm.client import generate_analysis, parse_agent_issues
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 from prguard_ai.schemas.context import ReviewContext
+from prguard_ai.security.prompt_injection import response_is_suspicious, wrap_diff
 
 from prguard_ai.config.settings import settings
 
@@ -105,7 +106,7 @@ def _build_llm_input(
         )
     return (
         f"{base_prompt}\n\n"
-        f"--- Changed code (Git diff) ---\n{diff_text}\n\n"
+        f"--- Changed code (Git diff) ---\n{wrap_diff(diff_text)}\n\n"
         f"--- Surrounding context ---\n{ctx}\n\n"
         f"--- AST summary of changed code ---\n{ast_blob}\n"
     )
@@ -119,32 +120,11 @@ def _resolve_context_file_path(file_path: str, sandbox_path: str | None) -> Path
 
 
 def _parse_llm_issues(raw: str) -> List[Issue]:
-    clean = extract_json_from_llm_response(raw)
     try:
-        data = json.loads(clean)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse LLM logic response as JSON. Raw: %s", raw[:500])
+        return parse_agent_issues(raw)[:20]
+    except Exception:
+        logger.warning("Failed to parse structured LLM logic response. Raw: %s", raw[:500], exc_info=True)
         return []
-    if not isinstance(data, list):
-        logger.warning("LLM logic response is not a JSON array. Raw: %s", raw[:500])
-        return []
-    out: List[Issue] = []
-    for item in data:
-        if len(out) >= 20:
-            logger.warning("Logic agent hit maximum issue limit (20). Skipping remaining issues.")
-            break
-        try:
-            out.append(Issue.validate_and_sanitize(item))
-        except Exception as exc:
-            logger.warning(
-                "Parsing failure: failed to validate Issue from item %s. Exception: %s. Raw LLM response (truncated): %s",
-                item,
-                exc,
-                raw[:500],
-                exc_info=True
-            )
-            continue
-    return out
 
 
 class LogicAgent(BaseAgent):
@@ -244,6 +224,8 @@ class LogicAgent(BaseAgent):
             try:
                 prompt = _build_llm_input(diff_text, context_snippets, ast_summary)
                 text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
+                if response_is_suspicious(text, diff_text):
+                    self.reasoning_trace.append("logic: flagged potential prompt injection for manual review")
                 llm_issues = _parse_llm_issues(text)
                 self.reasoning_trace.append("logic: synthesized LLM findings after AST and test/tool inspection")
             except (CircuitBreakerError, TokenBudgetExceededError) as exc:

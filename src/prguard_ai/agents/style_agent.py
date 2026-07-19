@@ -24,9 +24,10 @@ from prguard_ai.agents.detectors import (
 from prguard_ai.analysis.diff_parser import DiffHunk, extract_changed_files, parse_diff
 from prguard_ai.analysis.repo_indexer import retrieve_similar_code
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
-from prguard_ai.llm.client import extract_json_from_llm_response, generate_analysis
+from prguard_ai.llm.client import generate_analysis, parse_agent_issues
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 from prguard_ai.schemas.context import ReviewContext
+from prguard_ai.security.prompt_injection import response_is_suspicious, wrap_diff
 
 from prguard_ai.config.settings import settings
 
@@ -81,37 +82,16 @@ def _build_llm_input(diff_text: str, repo_examples: List[str]) -> str:
         "- Frontend/UI design regressions that make the interface look broken or unreadable\n"
         "- Unreadable text contrast, tiny text, missing focus styles, and obviously inconsistent visual styling\n\n"
         f"--- Repository style examples (truncated) ---\n{examples_blob}\n\n"
-        f"--- Diff ---\n{diff_text}\n"
+        f"--- Diff ---\n{wrap_diff(diff_text)}\n"
     )
 
 
 def _parse_llm_issues(raw: str) -> List[Issue]:
-    clean = extract_json_from_llm_response(raw)
     try:
-        data = json.loads(clean)
-    except json.JSONDecodeError:
-        logger.warning("Failed to parse LLM style response as JSON. Raw: %s", raw[:500])
+        return parse_agent_issues(raw)[:20]
+    except Exception:
+        logger.warning("Failed to parse structured LLM style response. Raw: %s", raw[:500], exc_info=True)
         return []
-    issues: List[Issue] = []
-    if not isinstance(data, list):
-        logger.warning("LLM style response is not a JSON array. Raw: %s", raw[:500])
-        return []
-    for item in data:
-        if len(issues) >= 20:
-            logger.warning("Style agent hit maximum issue limit (20). Skipping remaining issues.")
-            break
-        try:
-            issues.append(Issue.validate_and_sanitize(item))
-        except Exception as exc:
-            logger.warning(
-                "Parsing failure: failed to validate Issue from item %s. Exception: %s. Raw LLM response (truncated): %s",
-                item,
-                exc,
-                raw[:500],
-                exc_info=True
-            )
-            continue
-    return issues
 
 
 def _looks_like_frontend_change(file_path: str, text: str) -> bool:
@@ -365,6 +345,8 @@ class StyleAgent(BaseAgent):
             try:
                 prompt = _build_llm_input(diff_text, repo_examples)
                 text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
+                if response_is_suspicious(text, diff_text):
+                    self.reasoning_trace.append("style: flagged potential prompt injection for manual review")
                 llm_issues = _parse_llm_issues(text)
                 _attach_file_paths_to_llm_issues(llm_issues, relevant_hunks)
                 self.reasoning_trace.append("style: synthesized LLM findings after grounding with repo examples")
