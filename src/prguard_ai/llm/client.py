@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import threading
 import time
 from typing import Any, Dict, Tuple
@@ -18,6 +17,7 @@ from prguard_ai.observability.metrics import LLM_TOKENS_USED
 from prguard_ai.observability.tracing import get_tracer
 from prguard_ai.cost.budget_manager import add_usage, check_budget
 from prguard_ai.reliability.circuit_breaker import llm_breaker, CircuitBreakerError
+from prguard_ai.schemas.agent_output import AgentOutput, Issue
 from prguard_ai.task_queue.redis_client import get_redis, RedisClientError
 from prguard_ai.llm.model_router import model_router, semantic_cache
 import redis
@@ -27,10 +27,6 @@ logger = logging.getLogger(__name__)
 class TokenBudgetExceededError(Exception):
     """Exception raised when LLM token or cost budget is exceeded."""
     pass
-
-_JSON_ARRAY_PATTERN = re.compile(r"\[[\s\S]*\]", re.MULTILINE)
-_JSON_OBJECT_PATTERN = re.compile(r"\{[\s\S]*\}", re.MULTILINE)
-_MARKDOWN_FENCE_PATTERN = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.MULTILINE)
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2
@@ -48,56 +44,51 @@ def _is_truthy(value: str | None) -> bool:
     return str(value).lower() in {"1", "true", "yes", "on"}
 
 
-def extract_json_from_llm_response(raw: str) -> str:
-    """
-    Robustly extract a JSON array from an LLM response.
-
-    Handles:
-    - Clean JSON
-    - Markdown code fences (```json ... ```)
-    - Text before/after the JSON
-    - Leading/trailing whitespace
-    """
+def _strip_markdown_fence(raw: str) -> str:
     if not raw or not raw.strip():
-        return "[]"
-
+        return ""
     stripped = raw.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    first_newline = stripped.find("\n")
+    last_fence = stripped.rfind("```")
+    if first_newline == -1 or last_fence <= first_newline:
+        return stripped
+    return stripped[first_newline + 1:last_fence].strip()
 
-    json_match = _MARKDOWN_FENCE_PATTERN.search(stripped)
-    if json_match:
-        inner = json_match.group(1).strip()
-        if inner:
-            stripped = inner
 
-    array_match = _JSON_ARRAY_PATTERN.search(stripped)
-    if array_match:
-        stripped = array_match.group(0)
-
-    stripped = stripped.strip()
-    return stripped if stripped else "[]"
+def extract_json_from_llm_response(raw: str) -> str:
+    """Validate and return a JSON array response."""
+    stripped = _strip_markdown_fence(raw)
+    if not stripped:
+        return "[]"
+    data = json.loads(stripped)
+    if not isinstance(data, list):
+        raise ValueError("Expected LLM JSON array response.")
+    return json.dumps(data)
 
 
 def extract_json_obj_from_llm_response(raw: str) -> str:
-    """
-    Robustly extract a JSON object from an LLM response.
-    """
-    if not raw or not raw.strip():
+    """Validate and return a JSON object response."""
+    stripped = _strip_markdown_fence(raw)
+    if not stripped:
         return "{}"
+    data = json.loads(stripped)
+    if not isinstance(data, dict):
+        raise ValueError("Expected LLM JSON object response.")
+    return json.dumps(data)
 
-    stripped = raw.strip()
 
-    json_match = _MARKDOWN_FENCE_PATTERN.search(stripped)
-    if json_match:
-        inner = json_match.group(1).strip()
-        if inner:
-            stripped = inner
+def parse_agent_issues(raw: str) -> list[Issue]:
+    """Parse and validate an LLM issue array with the public Issue schema."""
+    data = json.loads(extract_json_from_llm_response(raw))
+    return [Issue.validate_and_sanitize(item) for item in data]
 
-    obj_match = _JSON_OBJECT_PATTERN.search(stripped)
-    if obj_match:
-        stripped = obj_match.group(0)
 
-    stripped = stripped.strip()
-    return stripped if stripped else "{}"
+def parse_agent_output(raw: str) -> AgentOutput:
+    """Parse and validate a complete structured agent response."""
+    data = json.loads(extract_json_obj_from_llm_response(raw))
+    return AgentOutput.model_validate(data)
 
 
 def calculate_openai_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
@@ -191,6 +182,7 @@ def generate_analysis(
     pr_id: str | None = None,
     agent: str = "unknown",
     use_cache: bool = True,
+    expect_json: bool = True,
 ) -> Tuple[str, Dict[str, Any]]:
     """
     Call the OpenAI API with retry and basic rate-limit handling.
@@ -258,16 +250,18 @@ def generate_analysis(
             span.set_attribute("llm.attempt", attempt)
             try:
                 client = _get_client()
-                response = llm_breaker.call(
-                    client.chat.completions.create,
-                    model=model,
-                    messages=[
+                request_kwargs = {
+                    "model": model,
+                    "messages": [
                         {"role": "system", "content": "Reasoning: low"},
                         {"role": "user", "content": prompt},
                     ],
-                    max_tokens=requested,
-                    temperature=temperature,
-                )
+                    "max_tokens": requested,
+                    "temperature": temperature,
+                }
+                if expect_json and not settings.nvidia_api_key:
+                    request_kwargs["response_format"] = {"type": "json_object"}
+                response = llm_breaker.call(client.chat.completions.create, **request_kwargs)
                 message = response.choices[0].message.content or ""
                 usage_obj = response.usage
                 usage = {
@@ -344,6 +338,8 @@ def generate_analysis(
 __all__ = [
     "extract_json_from_llm_response",
     "extract_json_obj_from_llm_response",
+    "parse_agent_issues",
+    "parse_agent_output",
     "generate_analysis",
     "check_llm_health",
     "DEFAULT_MODEL",
