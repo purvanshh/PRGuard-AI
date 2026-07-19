@@ -97,47 +97,6 @@ class TestCeleryAgentTasks:
 # ---------------------------------------------------------------------------
 # run_arbitrator
 # ---------------------------------------------------------------------------
-
-class TestRunArbitrator:
-    def test_run_arbitrator_with_valid_outputs(self, monkeypatch):
-        from prguard_ai.task_queue import celery_app as ca
-
-        outputs = [
-            _make_agent_output("style").model_dump(),
-            _make_agent_output("logic").model_dump(),
-            _make_agent_output("security").model_dump(),
-        ]
-        result = ca.run_arbitrator(outputs)
-        assert "overall_confidence" in result
-        assert isinstance(result["disagreements"], list)
-
-    def test_run_arbitrator_with_failed_agent(self, monkeypatch):
-        """Arbitrator handles outputs where one agent failed (has error)."""
-        from prguard_ai.task_queue import celery_app as ca
-
-        failed = _make_agent_output("logic", error="timed out", llm_skipped=True)
-        outputs = [
-            _make_agent_output("style").model_dump(),
-            failed.model_dump(),
-            _make_agent_output("security").model_dump(),
-        ]
-        result = ca.run_arbitrator(outputs)
-        assert "overall_confidence" in result
-
-    def test_run_arbitrator_malformed_input_returns_degraded(self):
-        from prguard_ai.task_queue import celery_app as ca
-
-        # Completely invalid agent output dicts
-        result = ca.run_arbitrator([{"bad": "data"}, {"also": "bad"}])
-        assert "overall_confidence" in result
-
-    def test_run_arbitrator_empty_list(self):
-        from prguard_ai.task_queue import celery_app as ca
-
-        result = ca.run_arbitrator([])
-        assert result["overall_confidence"] == pytest.approx(0.0)
-
-
 # ---------------------------------------------------------------------------
 # tasks.py — post_review and on_task_failure (mocked GitHub calls)
 # ---------------------------------------------------------------------------

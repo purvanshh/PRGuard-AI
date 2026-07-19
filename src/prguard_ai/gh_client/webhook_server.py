@@ -34,7 +34,6 @@ from prguard_ai.observability.tracing import get_tracer
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from fastapi.responses import PlainTextResponse
 from prguard_ai.task_queue.celery_app import (
-    run_arbitrator,
     run_logic_agent,
     run_security_agent,
     run_style_agent,

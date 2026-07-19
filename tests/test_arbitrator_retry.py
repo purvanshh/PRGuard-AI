@@ -1,31 +1,10 @@
 from __future__ import annotations
 
 import pytest
-from unittest.mock import MagicMock, patch
 from prguard_ai.agents.arbitrator_agent import arbitrate_confidence
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 from prguard_ai.schemas.context import ReviewContext
 from prguard_ai.gh_client.github_client import format_pr_review
-from prguard_ai.task_queue.celery_app import (
-    run_arbitrator,
-    run_style_agent,
-    run_logic_agent,
-    run_security_agent,
-)
-
-
-def test_celery_task_configurations():
-    """Verify time limits and retry parameters are configured properly on Celery tasks."""
-    # Check arbitrator task configurations
-    assert run_arbitrator.time_limit == 300
-    assert run_arbitrator.soft_time_limit == 240
-    assert run_arbitrator.max_retries == 2
-    assert Exception in run_arbitrator.autoretry_for
-
-    # Check agent tasks time limits
-    for task in (run_style_agent, run_logic_agent, run_security_agent):
-        assert task.time_limit == 300
-        assert task.soft_time_limit == 240
 
 
 def test_arbitrate_confidence_partial_success():
@@ -146,33 +125,3 @@ def test_degraded_formatting():
     normal_markdown = format_pr_review(report)
     assert "Confidence Score" in normal_markdown
     assert "Disagreement Summary" in normal_markdown
-
-
-def test_run_arbitrator_handles_errors_gracefully():
-    """Verify the run_arbitrator Celery task catches errors and falls back to degraded mode."""
-    agent_outputs = [
-        {
-            "agent": "style",
-            "confidence": 0.7,
-            "issues": [
-                {
-                    "line": 4,
-                    "severity": "low",
-                    "message": "Indent",
-                    "evidence": "  ",
-                    "confidence_source": "rule_based"
-                }
-            ],
-            "llm_skipped": False,
-            "error": None
-        }
-    ]
-
-    # Force a failure during arbitration
-    with patch("prguard_ai.task_queue.celery_app.arbitrate_confidence", side_effect=ValueError("Arbitration crash")):
-        res = run_arbitrator(agent_outputs)
-        assert res["degraded"] is True
-        assert res["overall_confidence"] == 0.0
-        assert len(res["issues"]) == 1
-        assert res["issues"][0].message == "Indent"
-        assert res["error"] == "Arbitration crash"

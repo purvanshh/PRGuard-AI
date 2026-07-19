@@ -3,18 +3,16 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict
 
 import logging
 from celery import Celery
 
-from prguard_ai.agents.arbitrator_agent import arbitrate_confidence
 from prguard_ai.agents.logic_agent import analyze_logic
 from prguard_ai.agents.security_agent import analyze_security
 from prguard_ai.agents.style_agent import analyze_style
 from prguard_ai.config.settings import settings
 from prguard_ai.schemas.agent_output import AgentOutput
-from prguard_ai.schemas.pr_report import PullRequestReport
 from prguard_ai.observability.tracing import get_tracer
 from prguard_ai.observability.metrics import (
     AGENT_EXECUTION_TIME,
@@ -40,7 +38,6 @@ celery_app.conf.task_routes = {
     "task_queue.celery_app.run_style_agent": {"queue": "style"},
     "task_queue.celery_app.run_logic_agent": {"queue": "logic"},
     "task_queue.celery_app.run_security_agent": {"queue": "security"},
-    "task_queue.celery_app.run_arbitrator": {"queue": "arbitrator"},
     "task_queue.celery_app.refine_agent": {"queue": "refinement"},
     "task_queue.orchestrator.review_pr": {"queue": "orchestrator"},
     "task_queue.orchestrator.process_initial_agent_outputs": {"queue": "orchestrator"},
@@ -155,65 +152,6 @@ def run_security_agent(diff_text: str, repo_metadata: Dict[str, Any] | None = No
 
 
 @celery_app.task(
-    name="task_queue.celery_app.run_arbitrator",
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    max_retries=2,
-    time_limit=300,
-    soft_time_limit=240,
-)
-def run_arbitrator(agent_outputs: List[Dict[str, Any]]) -> dict:
-    """Celery task that runs the confidence arbitrator."""
-    from prguard_ai.schemas.context import ReviewContext
-    with _TRACER.start_as_current_span("arbitrator") as span:
-        try:
-            outputs: List[AgentOutput] = []
-            for o in agent_outputs:
-                try:
-                    outputs.append(AgentOutput(**o))
-                except Exception:
-                    # If parsing agent output fails, skip or handle as error
-                    pass
-            context = ReviewContext(
-                pr_id="dummy",
-                diff_text="",
-                agent_outputs={o.agent: o for o in outputs}
-            )
-            report = arbitrate_confidence(context, partial=True)
-            data = report.model_dump()
-            disagreements = getattr(report, "disagreements", [])
-            data["disagreements"] = disagreements
-            
-            # If any of the agent outputs had an error, mark report as degraded
-            if any(o.error for o in outputs):
-                data["degraded"] = True
-                
-            if data.get("pr_id"):
-                span.set_attribute("pr.id", data.get("pr_id"))
-            span.set_attribute("review.overall_confidence", float(data.get("overall_confidence", 0.0)))
-            return data
-        except Exception as exc:
-            logger.error("Arbitrator failed: %s. Returning degraded report.", exc)
-            outputs_list = []
-            issues = []
-            for o in agent_outputs:
-                try:
-                    out = AgentOutput(**o)
-                    outputs_list.append(out.model_dump())
-                    issues.extend(out.issues)
-                except Exception:
-                    pass
-            return {
-                "overall_confidence": 0.0,
-                "agent_outputs": outputs_list,
-                "issues": issues,
-                "disagreements": [],
-                "degraded": True,
-                "error": str(exc),
-            }
-
-
-@celery_app.task(
     name="task_queue.celery_app.refine_agent",
     autoretry_for=(Exception,),
     retry_backoff=True,
@@ -251,7 +189,6 @@ __all__ = [
     "run_style_agent",
     "run_logic_agent",
     "run_security_agent",
-    "run_arbitrator",
     "refine_agent",
     "review_pr",
 ]

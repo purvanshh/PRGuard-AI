@@ -11,7 +11,6 @@ def test_model_router_loads_config_and_routes_by_complexity():
     assert simple.model == "gpt-4o-mini"
     assert complex_route.model == "gpt-4o"
     assert complex_route.max_tokens == 2048
-    assert "local/offline" in complex_route.fallback_chain
 
 
 def test_semantic_cache_matches_near_duplicate_prompt():

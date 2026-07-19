@@ -6,14 +6,13 @@ import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List
 
 
 DEFAULT_MODEL_CONFIG = {
     "style": {"simple": "gpt-4o-mini", "complex": "gpt-4o", "max_tokens": 768},
     "logic": {"simple": "gpt-4o-mini", "complex": "gpt-4o", "max_tokens": 1536},
     "security": {"simple": "gpt-4o", "complex": "gpt-4o", "max_tokens": 2048},
-    "fallback_chain": ["gpt-4o-mini", "gpt-4o", "claude-3-5-sonnet", "local/offline"],
 }
 
 
@@ -23,7 +22,6 @@ class RouteDecision:
     complexity: str
     model: str
     max_tokens: int
-    fallback_chain: Tuple[str, ...]
 
 
 def _tokenize(text: str) -> set[str]:
@@ -109,8 +107,7 @@ class ModelRouter:
         complexity = self.assess_complexity(prompt)
         model = agent_config.get(complexity, agent_config.get("simple", "gpt-4o-mini"))
         max_tokens = int(agent_config.get("max_tokens", 1024))
-        chain = tuple(self.config.get("fallback_chain", DEFAULT_MODEL_CONFIG["fallback_chain"]))
-        return RouteDecision(normalized_agent, complexity, str(model), max_tokens, chain)
+        return RouteDecision(normalized_agent, complexity, str(model), max_tokens)
 
 
 semantic_cache = SemanticCache()
