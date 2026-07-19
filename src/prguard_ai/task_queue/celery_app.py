@@ -220,7 +220,7 @@ def run_arbitrator(agent_outputs: List[Dict[str, Any]]) -> dict:
     soft_time_limit=240,
 )
 def refine_agent(pr_id: str, agent_name: str) -> dict:
-    """Celery task that executes an agent's refinement pass."""
+    """Celery task that executes an agent's refinement pass with tool access."""
     from prguard_ai.db.redis_client import get_review_context, store_review_agent_output
     from prguard_ai.agents import get_agent_by_name
     from prguard_ai.schemas.agent_output import AgentOutput
@@ -231,11 +231,12 @@ def refine_agent(pr_id: str, agent_name: str) -> dict:
         if not ctx:
             raise ValueError(f"Context missing for PR {pr_id}")
 
-        agent = get_agent_by_name(agent_name)
+        agent_cls = get_agent_by_name(agent_name)
         initial = ctx.agent_outputs[agent_name]
-        message, refined = agent.refine(initial, ctx)
 
-        # Update context in Redis (best-effort write; orchestrator performs final consistent merge)
+        agent_instance = agent_cls(repo_metadata=ctx.repo_metadata)
+        message, refined = agent_instance.refine_with_tools(ctx, initial)
+
         store_review_agent_output(pr_id, agent_name, refined)
         return {
             "message": message,

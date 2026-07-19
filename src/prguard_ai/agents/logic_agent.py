@@ -6,7 +6,7 @@ import json
 import logging
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List
 
 from prguard_ai.agents.base_agent import BaseAgent
 from prguard_ai.agents.detectors import (
@@ -24,7 +24,6 @@ from prguard_ai.agents.detectors import (
     detect_unhandled_async,
     detect_variable_shadowing,
 )
-from prguard_ai.agents.tools.schemas import ToolInvocation
 from prguard_ai.analysis.ast_parser import AstSummary, detect_language, summarize_source
 from prguard_ai.analysis.diff_parser import DiffHunk, extract_context_lines, parse_diff
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
@@ -152,33 +151,24 @@ class LogicAgent(BaseAgent):
     agent_name = "logic"
     empty_confidence = 0.45
 
-    def build_tool_plan(self, diff_text: str) -> Sequence[ToolInvocation]:
-        parsed = parse_diff(diff_text)
-        files = list(parsed.keys())[:2]
-        plan: List[ToolInvocation] = [
-            ToolInvocation(
-                tool="search_codebase",
-                args={"query": "TODO", "limit": 5},
-                rationale="Check whether the modified area is already marked as risky or incomplete elsewhere.",
-            )
-        ]
-        for file_path in files:
-            plan.append(
-                ToolInvocation(
-                    tool="get_type_info",
-                    args={"path": file_path},
-                    rationale=f"Inspect function signatures and return annotations in {file_path}.",
-                )
-            )
-        if files:
-            plan.append(
-                ToolInvocation(
-                    tool="run_test",
-                    args={"target": "tests"},
-                    rationale="See whether the repository test suite exposes impacted logic failures.",
-                )
-            )
-        return plan
+    def analyze_tool_needs(self, diff_text: str, changed_files: List[str]) -> List[str]:
+        needs: List[str] = []
+        has_python = any(f.endswith(".py") for f in changed_files)
+        if changed_files:
+            needs.append("get_type_info")
+        if has_python:
+            needs.append("run_test")
+            needs.append("search_codebase")
+        return needs[:3]
+
+    def detect_suspicious_findings(self, issues: List[Issue], diff_text: str) -> List[str]:
+        for issue in issues:
+            msg = issue.message.lower()
+            if any(t in msg for t in ["test", "failing", "crash", "exception"]):
+                return ["run_test"]
+            if any(t in msg for t in ["type", "return", "parameter", "argument"]):
+                return ["get_type_info"]
+        return []
 
     def synthesize_issues(self, diff_text: str, tool_outputs: Dict[str, Any]) -> List[Issue]:
         parsed = parse_diff(diff_text)

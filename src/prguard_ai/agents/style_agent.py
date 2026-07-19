@@ -6,7 +6,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List
 
 from prguard_ai.agents.base_agent import BaseAgent
 from prguard_ai.agents.detectors import (
@@ -21,7 +21,6 @@ from prguard_ai.agents.detectors import (
     detect_unused_import,
     detect_unused_variable,
 )
-from prguard_ai.agents.tools.schemas import ToolInvocation
 from prguard_ai.analysis.diff_parser import DiffHunk, extract_changed_files, parse_diff
 from prguard_ai.analysis.repo_indexer import retrieve_similar_code
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
@@ -261,33 +260,26 @@ class StyleAgent(BaseAgent):
     agent_name = "style"
     empty_confidence = 0.5
 
-    def build_tool_plan(self, diff_text: str) -> Sequence[ToolInvocation]:
-        parsed = parse_diff(diff_text)
-        changed_files = extract_changed_files(parsed)[:2]
-        plan: List[ToolInvocation] = [
-            ToolInvocation(
-                tool="search_codebase",
-                args={"query": "style", "limit": 3},
-                rationale="Find nearby repository conventions to compare against the diff.",
-            )
-        ]
-        for file_path in changed_files[:2]:
-            plan.append(
-                ToolInvocation(
-                    tool="read_file",
-                    args={"path": file_path, "start_line": 1, "end_line": 120},
-                    rationale=f"Inspect the changed file {file_path} for surrounding style context.",
-                )
-            )
+    def analyze_tool_needs(self, diff_text: str, changed_files: List[str]) -> List[str]:
+        needs: List[str] = []
+        has_python = any(f.endswith(".py") for f in changed_files)
+        has_frontend = any(
+            Path(f).suffix.lower() in {".css", ".scss", ".html", ".jsx", ".tsx", ".vue"}
+            for f in changed_files
+        )
+        if has_python:
+            needs.append("run_linter")
+        if has_frontend:
+            needs.append("search_codebase")
         if changed_files:
-            plan.append(
-                ToolInvocation(
-                    tool="run_linter",
-                    args={"path": changed_files[0]},
-                    rationale="Gather lightweight syntax and formatting signals for the primary changed file.",
-                )
-            )
-        return plan
+            needs.append("read_file")
+        return needs[:3]
+
+    def detect_suspicious_findings(self, issues: List[Issue], diff_text: str) -> List[str]:
+        for issue in issues:
+            if issue.file_path and issue.confidence_source == "llm_reasoning":
+                return ["read_file"]
+        return []
 
     def synthesize_issues(self, diff_text: str, tool_outputs: Dict[str, Any]) -> List[Issue]:
         parsed = parse_diff(diff_text)

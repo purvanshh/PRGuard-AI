@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List
 
 from prguard_ai.agents.base_agent import BaseAgent
 from prguard_ai.agents.detectors import (
@@ -21,7 +21,6 @@ from prguard_ai.agents.detectors import (
     detect_template_injection,
     detect_yaml_load,
 )
-from prguard_ai.agents.tools.schemas import ToolInvocation
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
 from prguard_ai.analysis.diff_parser import DiffHunk, parse_diff
 from prguard_ai.llm.client import extract_json_from_llm_response, generate_analysis
@@ -103,32 +102,23 @@ class SecurityAgent(BaseAgent):
     agent_name = "security"
     empty_confidence = 0.55
 
-    def build_tool_plan(self, diff_text: str) -> Sequence[ToolInvocation]:
-        parsed = parse_diff(diff_text)
-        files = list(parsed.keys())[:2]
-        plan: List[ToolInvocation] = [
-            ToolInvocation(
-                tool="dependency_scan",
-                args={},
-                rationale="Inspect dependency manifests for risky patterns or pinned vulnerabilities.",
-            )
-        ]
-        if files:
-            plan.append(
-                ToolInvocation(
-                    tool="git_blame",
-                    args={"path": files[0], "line": 1},
-                    rationale=f"Check ownership history of the primary changed file {files[0]}.",
-                )
-            )
-            plan.append(
-                ToolInvocation(
-                    tool="search_codebase",
-                    args={"query": "token", "limit": 5},
-                    rationale="Search for secret-handling patterns elsewhere in the repository.",
-                )
-            )
-        return plan
+    def analyze_tool_needs(self, diff_text: str, changed_files: List[str]) -> List[str]:
+        needs: List[str] = ["dependency_scan"]
+        combined = diff_text.lower()
+        if any(term in combined for term in ["secret", "token", "password", "key", "auth", "credential"]):
+            needs.append("search_codebase")
+        if changed_files:
+            needs.append("git_blame")
+        return needs[:3]
+
+    def detect_suspicious_findings(self, issues: List[Issue], diff_text: str) -> List[str]:
+        for issue in issues:
+            msg = issue.message.lower()
+            if any(t in msg for t in ["dependency", "package", "library", "version"]):
+                return ["dependency_scan"]
+            if any(t in msg for t in ["file", "path", "read", "write", "open"]):
+                return ["read_file"]
+        return []
 
     def synthesize_issues(self, diff_text: str, tool_outputs: Dict[str, Any]) -> List[Issue]:
         pr_id = self.repo_metadata.get("pr_id")
