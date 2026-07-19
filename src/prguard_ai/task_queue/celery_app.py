@@ -43,6 +43,8 @@ celery_app.conf.task_routes = {
     "task_queue.celery_app.run_arbitrator": {"queue": "arbitrator"},
     "task_queue.celery_app.refine_agent": {"queue": "refinement"},
     "task_queue.orchestrator.review_pr": {"queue": "orchestrator"},
+    "task_queue.orchestrator.process_initial_agent_outputs": {"queue": "orchestrator"},
+    "task_queue.orchestrator.process_refinement_outputs": {"queue": "orchestrator"},
     "task_queue.tasks.prepare_repository": {"queue": "orchestrator"},
     "task_queue.tasks.post_review": {"queue": "orchestrator"},
     "task_queue.tasks.on_task_failure": {"queue": "orchestrator"},

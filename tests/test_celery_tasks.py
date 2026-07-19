@@ -251,6 +251,35 @@ class TestPrepareRepository:
         assert result["sandbox_path"] == "/tmp/prguard/owner__repo#1/test"
 
 
+class TestOrchestratorNonBlocking:
+    def test_worker_nonblocking(self, monkeypatch):
+        import prguard_ai.task_queue.orchestrator as orch
+
+        class FakeAsyncResult:
+            id = "chord-123"
+
+            def get(self, *args, **kwargs):
+                raise AssertionError("orchestrator must not block on Celery results")
+
+        class FakeChord:
+            def __init__(self, header, body):
+                self.header = header
+                self.body = body
+
+            def apply_async(self, **kwargs):
+                return FakeAsyncResult()
+
+        monkeypatch.setattr(orch, "chord", FakeChord)
+
+        result = orch.review_pr(
+            {"diff_text": SIMPLE_DIFF, "sandbox_path": None},
+            "owner/repo#1",
+            {"repository": "owner/repo", "pr_number": 1},
+        )
+
+        assert result == {"status": "enqueued", "pr_id": "owner/repo#1", "workflow_id": "chord-123"}
+
+
 class TestReviewContextConcurrency:
     def test_concurrent_refinement_no_lost_updates(self):
         from prguard_ai.db.redis_client import get_review_context, store_review_agent_output, store_review_context

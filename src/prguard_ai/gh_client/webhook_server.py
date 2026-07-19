@@ -315,13 +315,12 @@ async def github_webhook(
             {"type": "agent_started", "agent": "orchestrator", "pr_id": pr_id},
         )
 
-        from celery import chain, group
-        from prguard_ai.task_queue.tasks import prepare_repository, post_review, on_task_failure
+        from celery import chain
+        from prguard_ai.task_queue.tasks import prepare_repository, on_task_failure
 
         workflow = chain(
             prepare_repository.s(pr_id, repo, pr_number, payload),
             review_pr.s(pr_id, repo_metadata),
-            post_review.s(repo, pr_number),
         )
 
         # Fire and forget the Celery chain

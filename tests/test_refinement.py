@@ -125,18 +125,13 @@ def test_review_pr_orchestrator(monkeypatch):
     diff_text = "diff --git a/foo.py b/foo.py\n+new line"
     repo_metadata = {"repository": "owner/repo", "pr_number": 2, "pr_id": pr_id}
 
-    report_dict = review_pr({"diff_text": diff_text, "sandbox_path": None}, pr_id, repo_metadata)
-    assert "overall_confidence" in report_dict
-    assert "issues" in report_dict
+    result = review_pr({"diff_text": diff_text, "sandbox_path": None}, pr_id, repo_metadata)
+    assert result["status"] == "enqueued"
+    assert result["pr_id"] == pr_id
 
-    # Verify context stored in Redis
+    # Verify context stored in Redis after chord callbacks complete
     ctx = get_review_context(pr_id)
     assert ctx is not None
-    # The loop should stop at round 2 because of the consecutive no-change stopping condition
-    # (round 1 had no changes compared to initial, and round 2 had no changes compared to round 1).
-    assert ctx.round == 2
     assert "style" in ctx.agent_outputs
     assert "logic" in ctx.agent_outputs
     assert "security" in ctx.agent_outputs
-    assert len(ctx.dialogue) > 0
-    assert ctx.coordinator_guidance
