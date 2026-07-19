@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List
+
+import redis
+
+from prguard_ai.config.settings import settings
 
 
 DEFAULT_MODEL_CONFIG = {
@@ -29,31 +36,154 @@ def _tokenize(text: str) -> set[str]:
 
 
 class SemanticCache:
-    """Small process-local semantic cache using token Jaccard similarity."""
+    """Redis-backed semantic cache with TTL, versioning, and bounded fallback."""
 
-    def __init__(self, threshold: float = 0.82) -> None:
+    def __init__(
+        self,
+        threshold: float = 0.82,
+        *,
+        ttl_seconds: int = 24 * 60 * 60,
+        max_entries: int = 10_000,
+        namespace: str = "prguard:semantic-cache",
+        prompt_version: str = "v1",
+        redis_client: object | None = None,
+    ) -> None:
         self.threshold = threshold
-        self._entries: List[tuple[set[str], str, dict]] = []
+        self.ttl_seconds = ttl_seconds
+        self.max_entries = max_entries
+        self.namespace = namespace
+        self.prompt_version = prompt_version
+        self._redis = redis_client
+        self._entries: OrderedDict[str, dict] = OrderedDict()
+
+    def _client(self) -> object | None:
+        if self._redis is not None:
+            return self._redis
+        try:
+            self._redis = redis.Redis.from_url(settings.redis_url, decode_responses=True)
+            self._redis.ping()
+            return self._redis
+        except Exception:
+            self._redis = None
+            return None
+
+    def _fingerprint(self, prompt: str) -> str:
+        return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+    def _redis_key(self, prompt: str) -> str:
+        return f"{self.namespace}:{self.prompt_version}:{self._fingerprint(prompt)}"
+
+    def _index_key(self) -> str:
+        return f"{self.namespace}:{self.prompt_version}:index"
+
+    def _embed(self, prompt: str) -> dict[str, float]:
+        tokens = _tokenize(prompt)
+        if not tokens:
+            return {}
+        weight = 1.0 / len(tokens)
+        return {token: weight for token in tokens}
+
+    def _similarity(self, left: dict[str, float], right: dict[str, float]) -> float:
+        if not left or not right:
+            return 0.0
+        shared = set(left) & set(right)
+        dot = sum(left[token] * right[token] for token in shared)
+        left_norm = sum(value * value for value in left.values()) ** 0.5
+        right_norm = sum(value * value for value in right.values()) ** 0.5
+        return dot / max(left_norm * right_norm, 1e-9)
+
+    def _pack(self, prompt: str, response: str, meta: dict) -> str:
+        stored_meta = dict(meta)
+        stored_meta["cache_key"] = self._fingerprint(prompt)[:16]
+        stored_meta["prompt_version"] = self.prompt_version
+        return json.dumps({"embedding": self._embed(prompt), "response": response, "meta": stored_meta})
+
+    def _unpack(self, payload: str | bytes | None) -> dict | None:
+        if payload is None:
+            return None
+        if isinstance(payload, bytes):
+            payload = payload.decode("utf-8")
+        try:
+            data = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(data, dict):
+            return None
+        return data
 
     def get(self, prompt: str) -> tuple[str, dict] | None:
-        tokens = _tokenize(prompt)
-        for cached_tokens, response, meta in self._entries:
-            union = max(len(tokens | cached_tokens), 1)
-            similarity = len(tokens & cached_tokens) / union
+        embedding = self._embed(prompt)
+        client = self._client()
+        if client is not None:
+            try:
+                keys = list(client.zrevrange(self._index_key(), 0, self.max_entries - 1))
+                for key in keys:
+                    data = self._unpack(client.get(key))
+                    if not data:
+                        continue
+                    similarity = self._similarity(embedding, data.get("embedding", {}))
+                    if similarity >= self.threshold:
+                        meta = dict(data.get("meta", {}))
+                        meta["cache_hit"] = True
+                        meta["cache_similarity"] = round(similarity, 4)
+                        return str(data.get("response", "")), meta
+            except Exception:
+                self._redis = None
+
+        now = time.time()
+        expired = [key for key, value in self._entries.items() if value["expires_at"] <= now]
+        for key in expired:
+            self._entries.pop(key, None)
+        for key, data in list(self._entries.items()):
+            similarity = self._similarity(embedding, data["embedding"])
             if similarity >= self.threshold:
-                hit_meta = dict(meta)
+                self._entries.move_to_end(key)
+                hit_meta = dict(data["meta"])
                 hit_meta["cache_hit"] = True
                 hit_meta["cache_similarity"] = round(similarity, 4)
-                return response, hit_meta
+                return data["response"], hit_meta
         return None
 
     def set(self, prompt: str, response: str, meta: dict) -> None:
-        stored_meta = dict(meta)
-        stored_meta["cache_key"] = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16]
-        self._entries.append((_tokenize(prompt), response, stored_meta))
+        key = self._redis_key(prompt)
+        payload = self._pack(prompt, response, meta)
+        client = self._client()
+        if client is not None:
+            try:
+                client.setex(key, self.ttl_seconds, payload)
+                client.zadd(self._index_key(), {key: time.time()})
+                stale = client.zrange(self._index_key(), 0, -(self.max_entries + 1))
+                if stale:
+                    client.delete(*stale)
+                    client.zrem(self._index_key(), *stale)
+                client.expire(self._index_key(), self.ttl_seconds)
+                return
+            except Exception:
+                self._redis = None
+
+        data = self._unpack(payload)
+        if data is None:
+            return
+        data["expires_at"] = time.time() + self.ttl_seconds
+        self._entries[key] = data
+        self._entries.move_to_end(key)
+        while len(self._entries) > self.max_entries:
+            self._entries.popitem(last=False)
 
     def clear(self) -> None:
+        client = self._client()
+        if client is not None:
+            try:
+                keys = list(client.zrange(self._index_key(), 0, -1))
+                if keys:
+                    client.delete(*keys)
+                client.delete(self._index_key())
+            except Exception:
+                self._redis = None
         self._entries.clear()
+
+    def invalidate_prompt_version(self, prompt_version: str) -> None:
+        self.prompt_version = prompt_version
 
 
 class ModelRouter:
