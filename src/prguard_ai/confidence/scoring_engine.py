@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Dict, Iterable
+from typing import Dict, Iterable, Optional
 
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
@@ -21,6 +21,39 @@ TIER_TO_NUMERIC: Dict[ConfidenceTier, float] = {
     ConfidenceTier.MEDIUM: 0.6,
     ConfidenceTier.LOW: 0.3,
 }
+
+
+class ConfidenceScorer:
+    """Instance-based confidence scorer with injectable weights."""
+
+    def __init__(self, source_weights: dict[str, float] | None = None, severity_weights: dict[str, float] | None = None):
+        self.source_weights = source_weights or {
+            "rule_based": 0.88,
+            "llm_reasoning": 0.62,
+            "refined": 0.72,
+            "inferred": 0.38,
+        }
+        self.severity_weights = severity_weights or {
+            "high": 0.9,
+            "medium": 0.72,
+            "low": 0.45,
+        }
+
+    def estimate_confidence(self, issues: Iterable[Issue], *, empty_confidence: float, max_issue_bonus: float = 0.09) -> float:
+        issues_list = list(issues)
+        if not issues_list:
+            return empty_confidence
+
+        scores = []
+        for issue in issues_list:
+            source_score = self.source_weights.get(issue.confidence_source, 0.38)
+            severity_score = self.severity_weights.get(issue.severity.lower(), 0.45)
+            verification_bonus = 0.04 if issue.verified else 0.0
+            scores.append(min(1.0, (source_score + severity_score) / 2 + verification_bonus))
+
+        issue_bonus = min(len(issues_list), 3) * (max_issue_bonus / 3.0)
+        return max(0.0, min(1.0, sum(scores) / len(scores) + issue_bonus))
+
 
 SOURCE_WEIGHTS: Dict[str, float] = {
     "rule_based": 0.88,
@@ -47,21 +80,17 @@ def _counts(issues: Iterable[Issue]) -> dict[str, int]:
 
 
 def confidence_breakdown(issues: Iterable[Issue]) -> dict[str, int]:
-    """Return raw confidence evidence counts for review text and logs."""
     return _counts(issues)
 
 
 def compute_confidence_tier(agent_output: AgentOutput) -> ConfidenceTier:
-    """Return a confidence tier for one agent output."""
     if not agent_output.issues:
         return ConfidenceTier.HIGH
-
     counts = _counts(agent_output.issues)
     total = max(counts["total"], 1)
     rule_ratio = counts["rule_based"] / total
     verified_ratio = counts["verified"] / total
     inferred_ratio = counts["inferred"] / total
-
     if rule_ratio > 0.5 and verified_ratio > 0.5:
         return ConfidenceTier.HIGH
     if inferred_ratio > 0.5 or verified_ratio < 0.2:
@@ -70,11 +99,9 @@ def compute_confidence_tier(agent_output: AgentOutput) -> ConfidenceTier:
 
 
 def aggregate_confidence_tier(outputs: Iterable[AgentOutput]) -> ConfidenceTier:
-    """Aggregate confidence tiers conservatively across agents."""
     outputs_list = list(outputs)
     if not outputs_list:
         return ConfidenceTier.LOW
-
     tiers = [compute_confidence_tier(output) for output in outputs_list]
     has_unverified_high = any(
         issue.severity == "high" and not issue.verified
@@ -94,34 +121,30 @@ def estimate_issue_confidence(
     empty_confidence: float,
     max_issue_bonus: float = 0.09,
 ) -> float:
-    """Estimate legacy numeric confidence while user-facing output stays tiered."""
     issues_list = list(issues)
     if not issues_list:
         return empty_confidence
-
     scores = []
     for issue in issues_list:
         source_score = SOURCE_WEIGHTS.get(issue.confidence_source, SOURCE_WEIGHTS["inferred"])
         severity_score = SEVERITY_WEIGHTS.get(issue.severity.lower(), SEVERITY_WEIGHTS["low"])
         verification_bonus = 0.04 if issue.verified else 0.0
         scores.append(min(1.0, (source_score + severity_score) / 2 + verification_bonus))
-
     issue_bonus = min(len(issues_list), 3) * (max_issue_bonus / 3.0)
     return max(0.0, min(1.0, sum(scores) / len(scores) + issue_bonus))
 
 
 def calculate_agent_confidence(output: AgentOutput) -> float:
-    """Legacy numeric adapter for code paths that still store floats internally."""
     return TIER_TO_NUMERIC[compute_confidence_tier(output)]
 
 
 def aggregate_confidence(outputs: Iterable[AgentOutput]) -> float:
-    """Legacy numeric adapter for metrics; user-facing output should use tiers."""
     return TIER_TO_NUMERIC[aggregate_confidence_tier(outputs)]
 
 
 __all__ = [
     "ConfidenceTier",
+    "ConfidenceScorer",
     "aggregate_confidence",
     "aggregate_confidence_tier",
     "calculate_agent_confidence",

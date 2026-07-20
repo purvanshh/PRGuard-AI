@@ -22,6 +22,7 @@ from prguard_ai.cost.budget_manager import add_usage, check_budget
 from prguard_ai.reliability.circuit_breaker import llm_breaker, CircuitBreakerError
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 from prguard_ai.task_queue.redis_client import get_redis, RedisClientError
+from prguard_ai.llm.token_budget import TokenBudget
 from prguard_ai.llm.model_router import model_router, semantic_cache
 import redis
 
@@ -70,10 +71,12 @@ class LLMClient:
         model: str | None = None,
         max_tokens: int = 512,
         temperature: float = 0.1,
+        token_budget: TokenBudget | None = None,
     ):
         self.default_model = model or DEFAULT_MODEL
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.token_budget = token_budget
 
     def _get_client(self) -> openai.OpenAI:
         return _get_client()

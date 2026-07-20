@@ -22,9 +22,11 @@ from prguard_ai.agents.tools.tool_args import (
     CheckAuthPatternsArgs,
     SearchCodebaseArgs,
 )
+from prguard_ai.confidence.scoring_engine import ConfidenceScorer
 from prguard_ai.llm.client import LLMClient, LLMIssueResponse, LLMRefineResponse
 from prguard_ai.policy.engine import apply_policy_to_issues, filter_diff_by_policy, load_effective_policy
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
+from prguard_ai.task_queue.redis_client import RedisClient
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +42,14 @@ class BaseAgent(ABC):
         self,
         repo_metadata: Dict[str, Any] | None = None,
         llm: LLMClient | None = None,
+        redis: RedisClient | None = None,
+        confidence_scorer: ConfidenceScorer | None = None,
     ) -> None:
         self.repo_metadata = repo_metadata or {}
         self.executor = AgentToolExecutor(self.repo_metadata)
         self.llm = llm or LLMClient()
+        self.redis = redis or RedisClient()
+        self.confidence_scorer = confidence_scorer or ConfidenceScorer()
         self.reasoning_trace: List[str] = []
         self.tool_records: List[ToolCallRecord] = []
         self.llm_skipped: bool = False
