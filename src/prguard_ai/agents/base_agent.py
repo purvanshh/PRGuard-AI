@@ -8,12 +8,25 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Sequence
 
-logger = logging.getLogger(__name__)
-
 from prguard_ai.agents.tools import AgentToolExecutor, ToolCallRecord, ToolInvocation
+from prguard_ai.agents.tools.tool_args import (
+    ToolArgs,
+    ReadFileArgs,
+    RunLinterArgs,
+    RunTestArgs,
+    CheckFormattingArgs,
+    CheckDeadCodeArgs,
+    SecretScanArgs,
+    DependencyScanArgs,
+    CveLookupArgs,
+    CheckAuthPatternsArgs,
+    SearchCodebaseArgs,
+)
 from prguard_ai.llm.client import LLMClient, LLMIssueResponse, LLMRefineResponse
 from prguard_ai.policy.engine import apply_policy_to_issues, filter_diff_by_policy, load_effective_policy
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
+
+logger = logging.getLogger(__name__)
 
 
 class BaseAgent(ABC):
@@ -37,8 +50,8 @@ class BaseAgent(ABC):
         self.policy = load_effective_policy(self.repo_metadata)
 
     @abstractmethod
-    def analyze_tool_needs(self, diff_text: str, changed_files: List[str]) -> List[str]:
-        """Examine the diff and decide which tools are relevant. Return tool names."""
+    def analyze_tool_needs(self, diff_text: str, changed_files: List[str]) -> Sequence[ToolArgs]:
+        """Return exact tool arguments to invoke. No string names. No switch statements."""
 
     @abstractmethod
     def synthesize_issues(self, diff_text: str, tool_outputs: Dict[str, Any]) -> List[Issue]:
@@ -53,44 +66,17 @@ class BaseAgent(ABC):
         """Return the aggregate confidence score for the current issue set."""
 
     def _build_tool_plan(self, diff_text: str, changed_files: List[str]) -> Sequence[ToolInvocation]:
-        tool_names = self.analyze_tool_needs(diff_text, changed_files)
+        tool_args_list = self.analyze_tool_needs(diff_text, changed_files)
         plan: List[ToolInvocation] = []
-        for name in tool_names:
-            args = self._args_for_tool(name, changed_files)
-            plan.append(ToolInvocation(tool=name, args=args, rationale=f"Dynamic need: {name}"))
+        for tool_args in tool_args_list:
+            plan.append(
+                ToolInvocation(
+                    tool=tool_args.tool_name,
+                    args=tool_args.args | {"tool_name": tool_args.tool_name},
+                    rationale=f"Dynamic need: {tool_args.tool_name}",
+                )
+            )
         return plan
-
-    def _args_for_tool(self, tool: str, changed_files: List[str]) -> Dict[str, Any]:
-        if tool == "read_file" and changed_files:
-            return {"path": changed_files[0], "start_line": 1, "end_line": 120}
-        if tool == "run_linter" and changed_files:
-            return {"path": changed_files[0]}
-        if tool == "search_codebase":
-            term = "secret" if self.agent_name == "security" else ("error" if self.agent_name == "logic" else "style")
-            return {"query": term, "limit": 3}
-        if tool == "git_blame" and changed_files:
-            return {"path": changed_files[0], "line": 1}
-        if tool == "get_type_info" and changed_files:
-            return {"path": changed_files[0]}
-        if tool == "dependency_scan":
-            return {}
-        if tool == "run_test":
-            return {"target": "tests"}
-        if tool == "check_formatting" and changed_files:
-            return {"path": changed_files[0]}
-        if tool == "get_repo_style_guide":
-            return {}
-        if tool == "symbolic_execute" and changed_files:
-            return {"path": changed_files[0], "function": ""}
-        if tool == "check_dead_code" and changed_files:
-            return {"path": changed_files[0]}
-        if tool == "cve_lookup":
-            return {}
-        if tool == "secret_scan":
-            return {"path": "."}
-        if tool == "check_auth_patterns":
-            return {"path": "."}
-        return {}
 
     def _execute_tools(self, plan: Sequence[ToolInvocation]) -> Dict[str, Any]:
         tool_outputs: Dict[str, Any] = {}
@@ -111,13 +97,32 @@ class BaseAgent(ABC):
         for tool_name in suspicious:
             if tool_name in tool_outputs:
                 continue
-            changed = [k for k in ["read_file", "run_linter", "git_blame", "check_formatting", "check_dead_code", "secret_scan"] if k in self.executor.available_tools]
-            args = self._args_for_tool(tool_name, changed)
+            args: ToolArgs | None = None
+            if tool_name == "read_file":
+                args = ReadFileArgs(path=".")
+            elif tool_name == "run_linter":
+                args = RunLinterArgs(path=".")
+            elif tool_name == "check_formatting":
+                args = CheckFormattingArgs(path=".")
+            elif tool_name == "check_dead_code":
+                args = CheckDeadCodeArgs(file_path=".")
+            elif tool_name == "secret_scan":
+                args = SecretScanArgs(path=".")
+            elif tool_name == "dependency_scan":
+                args = DependencyScanArgs()
+            elif tool_name == "cve_lookup":
+                args = CveLookupArgs()
+            elif tool_name == "check_auth_patterns":
+                args = CheckAuthPatternsArgs()
+            if args is None:
+                continue
             self.reasoning_trace.append(f"{self.agent_name}: verifying suspicious finding with tool={tool_name}")
-            result = self.executor.execute(ToolInvocation(tool=tool_name, args=args, rationale="verification"))
+            result = self.executor.execute(
+                ToolInvocation(tool=tool_name, args=args.args, rationale="verification")
+            )
             tool_outputs[tool_name] = result.output
             self.tool_records.append(ToolCallRecord(
-                invocation=ToolInvocation(tool=tool_name, args=args, rationale="verification"),
+                invocation=ToolInvocation(tool=tool_name, args=args.args, rationale="verification"),
                 result=result,
             ))
         return tool_outputs

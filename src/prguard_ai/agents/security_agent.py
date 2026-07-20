@@ -5,9 +5,17 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 from prguard_ai.agents.base_agent import BaseAgent
+from prguard_ai.agents.tools.tool_args import (
+    ToolArgs,
+    DependencyScanArgs,
+    SecretScanArgs,
+    SearchCodebaseArgs,
+    CveLookupArgs,
+    CheckAuthPatternsArgs,
+)
 from prguard_ai.agents.detectors import (
     detect_assert_validation,
     detect_command_injection,
@@ -95,18 +103,16 @@ class SecurityAgent(BaseAgent):
     agent_name = "security"
     empty_confidence = 0.55
 
-    def analyze_tool_needs(self, diff_text: str, changed_files: List[str]) -> List[str]:
-        needs: List[str] = ["dependency_scan"]
+    def analyze_tool_needs(self, diff_text: str, changed_files: List[str]) -> Sequence[ToolArgs]:
+        needs: list[ToolArgs] = [DependencyScanArgs()]
         combined = diff_text.lower()
         if any(term in combined for term in ["secret", "token", "password", "key", "auth", "credential"]):
-            needs.append("secret_scan")
-            needs.append("search_codebase")
-        if changed_files:
-            needs.append("git_blame")
-        needs.append("cve_lookup")
+            needs.append(SecretScanArgs(path="."))
+            needs.append(SearchCodebaseArgs(query="secret"))
+        needs.append(CveLookupArgs())
         has_python = any(f.endswith(".py") for f in changed_files)
         if has_python and any(term in combined for term in ["auth", "login", "permission", "role", "admin"]):
-            needs.append("check_auth_patterns")
+            needs.append(CheckAuthPatternsArgs(file_path="."))
         return needs[:3]
 
     def detect_suspicious_findings(self, issues: List[Issue], diff_text: str) -> List[str]:

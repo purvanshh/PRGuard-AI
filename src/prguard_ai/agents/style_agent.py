@@ -6,9 +6,17 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence
 
 from prguard_ai.agents.base_agent import BaseAgent
+from prguard_ai.agents.tools.tool_args import (
+    ToolArgs,
+    RunLinterArgs,
+    CheckFormattingArgs,
+    GetRepoStyleGuideArgs,
+    ReadFileArgs,
+    SearchCodebaseArgs,
+)
 from prguard_ai.agents.detectors import (
     detect_camelcase_function,
     detect_long_line,
@@ -253,22 +261,22 @@ class StyleAgent(BaseAgent):
     agent_name = "style"
     empty_confidence = 0.5
 
-    def analyze_tool_needs(self, diff_text: str, changed_files: List[str]) -> List[str]:
-        needs: List[str] = []
+    def analyze_tool_needs(self, diff_text: str, changed_files: List[str]) -> Sequence[ToolArgs]:
+        needs: list[ToolArgs] = []
         has_python = any(f.endswith(".py") for f in changed_files)
         has_frontend = any(
             Path(f).suffix.lower() in {".css", ".scss", ".html", ".jsx", ".tsx", ".vue"}
             for f in changed_files
         )
         if has_python:
-            needs.append("run_linter")
-            needs.append("check_formatting")
+            needs.append(RunLinterArgs(path=changed_files[0]))
+            needs.append(CheckFormattingArgs(path=changed_files[0]))
         if has_frontend:
-            needs.append("search_codebase")
+            needs.append(SearchCodebaseArgs(query="style"))
         if changed_files:
-            needs.append("read_file")
+            needs.append(ReadFileArgs(path=changed_files[0]))
         if has_python or has_frontend:
-            needs.append("get_repo_style_guide")
+            needs.append(GetRepoStyleGuideArgs())
         return needs[:3]
 
     def detect_suspicious_findings(self, issues: List[Issue], diff_text: str) -> List[str]:
