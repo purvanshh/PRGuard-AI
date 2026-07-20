@@ -439,7 +439,7 @@ Running 40 PRs through the pipeline was supposed to be automated. Instead it was
 - Changed from writing results once at the end to saving after every completed PR (incremental checkpoint)
 - Added `--resume` flag that skips already-completed PRs by reading the partial results file
 
-**The detail that still bothers me:** The `TokenBudget.used` property returned 0 for every single one of the 40 PRs. The token counter was wired up but never actually called during agent execution. So the evaluation report shows "Total tokens: 0" — a useless number. The tracking code exists, it's just not plugged into the agent loop.
+**The detail that still bothers me:** The `TokenBudget.used` property returned 0 for every single one of the 40 PRs. The token counter was wired up — `LLMClient.__init__` accepts a `token_budget` parameter, `generate()` calls `check_and_consume()` before every API call — but the agents construct their own `LLMClient` internally instead of using the one passed in. So the `token_budget` the batch runner creates never gets wired to anything. The evaluation report shows "Total tokens: 0" — a useless number. I left this unfixed because fixing it means refactoring three agent constructors to forward the client, and the token tracking doesn't affect correctness. It just means I can't answer "how many tokens did 40 PRs cost?" without running the billing report instead.
 
 ### The "suspicious LLM response for PR None" Warning
 
