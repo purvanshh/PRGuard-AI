@@ -72,3 +72,29 @@ def test_search_codebase_skips_symlink_escape(tmp_path):
 
     assert result.ok is True
     assert [match["path"] for match in result.output] == ["inside.py"]
+
+
+def test_read_file_rejects_oversized_file(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    large = repo / "large.py"
+    large.write_text("x" * 1_000_001, encoding="utf-8")
+
+    executor = AgentToolExecutor({"sandbox_path": str(repo)})
+    result = invoke(executor, "read_file", path="large.py")
+
+    assert result.ok is False
+    assert "File too large" in result.error
+
+
+def test_search_codebase_skips_oversized_file(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "large.py").write_text("needle\n" + ("x" * 1_000_001), encoding="utf-8")
+    (repo / "small.py").write_text("needle\n", encoding="utf-8")
+
+    executor = AgentToolExecutor({"sandbox_path": str(repo)})
+    result = invoke(executor, "search_codebase", query="needle", limit=10)
+
+    assert result.ok is True
+    assert [match["path"] for match in result.output] == ["small.py"]

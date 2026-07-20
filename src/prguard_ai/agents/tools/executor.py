@@ -28,6 +28,9 @@ SECRET_PATTERNS: List[re.Pattern] = [
     re.compile(r"(?i)sk_live_[a-zA-Z0-9]{24,}"),
     re.compile(r"(?i)pk_live_[a-zA-Z0-9]{24,}"),
 ]
+MAX_TOOL_FILE_BYTES = 1_000_000
+MAX_TOOL_SCAN_FILES = 500
+SKIPPED_SCAN_DIRS = {".git", ".hg", ".svn", ".mypy_cache", ".pytest_cache", ".ruff_cache", "__pycache__", "node_modules", "dist", "build"}
 
 
 class AgentToolExecutor:
@@ -92,12 +95,24 @@ class AgentToolExecutor:
             return False
         return True
 
+    def _is_scannable_file(self, path: Path) -> bool:
+        if not path.is_file() or not self._is_inside_repo(path):
+            return False
+        if any(part in SKIPPED_SCAN_DIRS for part in path.parts):
+            return False
+        try:
+            return path.stat().st_size <= MAX_TOOL_FILE_BYTES
+        except OSError:
+            return False
+
     def _read_file(self, args: Dict[str, Any]) -> ToolResult:
         path = self._resolve_path(str(args.get("path", "")))
         start_line = max(int(args.get("start_line", 1)), 1)
         end_line = max(int(args.get("end_line", start_line + 40)), start_line)
         if not path.exists():
             return ToolResult(tool="read_file", ok=False, error=f"File not found: {path}")
+        if path.stat().st_size > MAX_TOOL_FILE_BYTES:
+            return ToolResult(tool="read_file", ok=False, error=f"File too large for tool read: {path}")
         lines = path.read_text(encoding="utf-8").splitlines()
         snippet = lines[start_line - 1:end_line]
         return ToolResult(
@@ -111,11 +126,15 @@ class AgentToolExecutor:
         if not query or self.repo_root is None or not self.repo_root.exists():
             return ToolResult(tool="search_codebase", output=[])
         matches: List[Dict[str, Any]] = []
+        scanned = 0
         for path in self.repo_root.rglob("*"):
             if len(matches) >= limit:
                 break
-            if not path.is_file() or not self._is_inside_repo(path):
+            if not self._is_scannable_file(path):
                 continue
+            scanned += 1
+            if scanned > MAX_TOOL_SCAN_FILES:
+                break
             try:
                 for idx, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
                     if query.lower() in line.lower():
@@ -323,9 +342,7 @@ class AgentToolExecutor:
             return ToolResult(tool="secret_scan", output={"secrets_found": []})
         secrets: List[Dict[str, Any]] = []
         for path in search_root.rglob("*"):
-            if not path.is_file() or not self._is_inside_repo(path):
-                continue
-            if path.suffix in {".pyc", ".png", ".jpg", ".gif", ".svg", ".lock"}:
+            if not self._is_scannable_file(path) or path.suffix in {".pyc", ".png", ".jpg", ".gif", ".svg", ".lock"}:
                 continue
             if any(part.startswith(".") or part == "__pycache__" for part in path.parts):
                 continue
@@ -360,9 +377,7 @@ class AgentToolExecutor:
             re.compile(r"(?i)authentication\s*=\s*None"),
         ]
         for path in search_root.rglob("*.py"):
-            if not self._is_inside_repo(path):
-                continue
-            if any(part.startswith(".") or part == "__pycache__" for part in path.parts):
+            if not self._is_scannable_file(path):
                 continue
             try:
                 for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
