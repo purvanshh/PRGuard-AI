@@ -1,0 +1,500 @@
+[
+  {
+    "pr_id": "115164",
+    "files_changed": 2,
+    "style": {
+      "issue_count": 3,
+      "issues": [
+        {
+          "line": 16,
+          "severity": "low",
+          "message": "Unused import: pyexpat."
+        },
+        {
+          "line": 16,
+          "severity": "low",
+          "message": "Module is missing a module-level docstring."
+        },
+        {
+          "line": 124,
+          "severity": "low",
+          "message": "Unused variable 'fails_with_expat_2_6_0'."
+        }
+      ]
+    },
+    "logic": {
+      "issue_count": 0,
+      "issues": []
+    },
+    "security": {
+      "issue_count": 1,
+      "issues": [
+        {
+          "line": 1,
+          "severity": "medium",
+          "message": "XML parsing may be vulnerable to XML bomb / XXE. Use defusedxml."
+        }
+      ]
+    },
+    "tokens_used": 0,
+    "llm_calls": 0
+  },
+  {
+    "pr_id": "139359",
+    "files_changed": 7,
+    "style": {
+      "issue_count": 14,
+      "issues": [
+        {
+          "line": 4,
+          "severity": "low",
+          "message": "Unused import: abc."
+        },
+        {
+          "line": 4,
+          "severity": "low",
+          "message": "Module is missing a module-level docstring."
+        },
+        {
+          "line": 5,
+          "severity": "low",
+          "message": "Unused import: functools."
+        },
+        {
+          "line": 5,
+          "severity": "low",
+          "message": "Module is missing a module-level docstring."
+        },
+        {
+          "line": 7,
+          "severity": "low",
+          "message": "Unused import: re."
+        }
+      ]
+    },
+    "logic": {
+      "issue_count": 4,
+      "issues": [
+        {
+          "line": 451,
+          "severity": "high",
+          "message": "Division by zero if divisor is 0."
+        },
+        {
+          "line": 515,
+          "severity": "high",
+          "message": "Division by zero if divisor is 0."
+        },
+        {
+          "line": 2290,
+          "severity": "low",
+          "message": "Typo in comment: &#x27;amplifcation&#x27; should be &#x27;amplification&#x27;."
+        },
+        {
+          "line": 128,
+          "severity": "low",
+          "message": "Inconsistent comment style: new code uses // comments while surrounding code uses /* */."
+        }
+      ]
+    },
+    "security": {
+      "issue_count": 2,
+      "issues": [
+        {
+          "line": 2290,
+          "severity": "low",
+          "message": "Typo in comment: &#x27;amplifcation&#x27; should be &#x27;amplification&#x27;."
+        },
+        {
+          "line": 128,
+          "severity": "low",
+          "message": "Inconsistent comment style: new code uses // comments while surrounding code uses /* */."
+        }
+      ]
+    },
+    "tokens_used": 0,
+    "llm_calls": 0
+  },
+  {
+    "pr_id": "142529",
+    "files_changed": 4,
+    "style": {
+      "issue_count": 9,
+      "issues": [
+        {
+          "line": 4,
+          "severity": "low",
+          "message": "Unused import: functools."
+        },
+        {
+          "line": 4,
+          "severity": "low",
+          "message": "Module is missing a module-level docstring."
+        },
+        {
+          "line": 8,
+          "severity": "low",
+          "message": "Unused import: re."
+        },
+        {
+          "line": 8,
+          "severity": "low",
+          "message": "Module is missing a module-level docstring."
+        },
+        {
+          "line": 977,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        }
+      ]
+    },
+    "logic": {
+      "issue_count": 0,
+      "issues": []
+    },
+    "security": {
+      "issue_count": 0,
+      "issues": []
+    },
+    "tokens_used": 0,
+    "llm_calls": 0
+  },
+  {
+    "pr_id": "146026",
+    "files_changed": 3,
+    "style": {
+      "issue_count": 1,
+      "issues": [
+        {
+          "line": 344,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        }
+      ]
+    },
+    "logic": {
+      "issue_count": 0,
+      "issues": []
+    },
+    "security": {
+      "issue_count": 0,
+      "issues": []
+    },
+    "tokens_used": 0,
+    "llm_calls": 0
+  },
+  {
+    "pr_id": "146027",
+    "files_changed": 3,
+    "style": {
+      "issue_count": 1,
+      "issues": [
+        {
+          "line": 344,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        }
+      ]
+    },
+    "logic": {
+      "issue_count": 0,
+      "issues": []
+    },
+    "security": {
+      "issue_count": 0,
+      "issues": []
+    },
+    "tokens_used": 0,
+    "llm_calls": 0
+  },
+  {
+    "pr_id": "150749",
+    "files_changed": 3,
+    "style": {
+      "issue_count": 4,
+      "issues": [
+        {
+          "line": 119,
+          "severity": "low",
+          "message": "Unused variable '_MAXINTERIMRESPONSES'."
+        },
+        {
+          "line": 571,
+          "severity": "low",
+          "message": "Unused variable 'trailers_read'."
+        },
+        {
+          "line": 1335,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        },
+        {
+          "line": 1348,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        }
+      ]
+    },
+    "logic": {
+      "issue_count": 0,
+      "issues": []
+    },
+    "security": {
+      "issue_count": 3,
+      "issues": [
+        {
+          "line": 1361,
+          "severity": "low",
+          "message": "Unbounded file/stream read \u2014 potential memory amplification if input is large."
+        },
+        {
+          "line": 342,
+          "severity": "high",
+          "message": "Unbounded interim response loop allows DoS: a malicious server can stream infinite &#x27;100 Continu"
+        },
+        {
+          "line": 568,
+          "severity": "high",
+          "message": "Unbounded trailer line reading allows DoS: a malicious server can stream infinite trailer lines, han"
+        }
+      ]
+    },
+    "tokens_used": 0,
+    "llm_calls": 0
+  },
+  {
+    "pr_id": "152523",
+    "files_changed": 4,
+    "style": {
+      "issue_count": 5,
+      "issues": [
+        {
+          "line": 119,
+          "severity": "low",
+          "message": "Unused variable '_MAXINTERIMRESPONSES'."
+        },
+        {
+          "line": 583,
+          "severity": "low",
+          "message": "Unused variable 'trailers_read'."
+        },
+        {
+          "line": 481,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        },
+        {
+          "line": 1410,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        },
+        {
+          "line": 1423,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        }
+      ]
+    },
+    "logic": {
+      "issue_count": 0,
+      "issues": []
+    },
+    "security": {
+      "issue_count": 8,
+      "issues": [
+        {
+          "line": 343,
+          "severity": "low",
+          "message": "Unbounded file/stream read \u2014 potential memory amplification if input is large."
+        },
+        {
+          "line": 483,
+          "severity": "low",
+          "message": "Unbounded file/stream read \u2014 potential memory amplification if input is large."
+        },
+        {
+          "line": 499,
+          "severity": "low",
+          "message": "Unbounded file/stream read \u2014 potential memory amplification if input is large."
+        },
+        {
+          "line": 508,
+          "severity": "low",
+          "message": "Unbounded file/stream read \u2014 potential memory amplification if input is large."
+        },
+        {
+          "line": 1436,
+          "severity": "low",
+          "message": "Unbounded file/stream read \u2014 potential memory amplification if input is large."
+        }
+      ]
+    },
+    "tokens_used": 0,
+    "llm_calls": 0
+  },
+  {
+    "pr_id": "152526",
+    "files_changed": 3,
+    "style": {
+      "issue_count": 4,
+      "issues": [
+        {
+          "line": 119,
+          "severity": "low",
+          "message": "Unused variable '_MAXINTERIMRESPONSES'."
+        },
+        {
+          "line": 571,
+          "severity": "low",
+          "message": "Unused variable 'trailers_read'."
+        },
+        {
+          "line": 1325,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        },
+        {
+          "line": 1338,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        }
+      ]
+    },
+    "logic": {
+      "issue_count": 0,
+      "issues": []
+    },
+    "security": {
+      "issue_count": 3,
+      "issues": [
+        {
+          "line": 1351,
+          "severity": "low",
+          "message": "Unbounded file/stream read \u2014 potential memory amplification if input is large."
+        },
+        {
+          "line": 342,
+          "severity": "high",
+          "message": "Unbounded interim response loop allows DoS: a malicious server can stream infinite &#x27;100 Continu"
+        },
+        {
+          "line": 568,
+          "severity": "high",
+          "message": "Unbounded trailer line reading allows DoS: a malicious server can stream infinite trailer lines, han"
+        }
+      ]
+    },
+    "tokens_used": 0,
+    "llm_calls": 0
+  },
+  {
+    "pr_id": "152528",
+    "files_changed": 3,
+    "style": {
+      "issue_count": 4,
+      "issues": [
+        {
+          "line": 119,
+          "severity": "low",
+          "message": "Unused variable '_MAXINTERIMRESPONSES'."
+        },
+        {
+          "line": 565,
+          "severity": "low",
+          "message": "Unused variable 'trailers_read'."
+        },
+        {
+          "line": 1260,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        },
+        {
+          "line": 1273,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        }
+      ]
+    },
+    "logic": {
+      "issue_count": 0,
+      "issues": []
+    },
+    "security": {
+      "issue_count": 3,
+      "issues": [
+        {
+          "line": 1286,
+          "severity": "low",
+          "message": "Unbounded file/stream read \u2014 potential memory amplification if input is large."
+        },
+        {
+          "line": 342,
+          "severity": "high",
+          "message": "Unbounded interim response loop allows DoS: a malicious server can stream infinite &#x27;100 Continu"
+        },
+        {
+          "line": 568,
+          "severity": "high",
+          "message": "Unbounded trailer line reading allows DoS: a malicious server can stream infinite trailer lines, han"
+        }
+      ]
+    },
+    "tokens_used": 0,
+    "llm_calls": 0
+  },
+  {
+    "pr_id": "152529",
+    "files_changed": 3,
+    "style": {
+      "issue_count": 4,
+      "issues": [
+        {
+          "line": 119,
+          "severity": "low",
+          "message": "Unused variable '_MAXINTERIMRESPONSES'."
+        },
+        {
+          "line": 558,
+          "severity": "low",
+          "message": "Unused variable 'trailers_read'."
+        },
+        {
+          "line": 1096,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        },
+        {
+          "line": 1109,
+          "severity": "low",
+          "message": "Function is missing a docstring."
+        }
+      ]
+    },
+    "logic": {
+      "issue_count": 0,
+      "issues": []
+    },
+    "security": {
+      "issue_count": 3,
+      "issues": [
+        {
+          "line": 1122,
+          "severity": "low",
+          "message": "Unbounded file/stream read \u2014 potential memory amplification if input is large."
+        },
+        {
+          "line": 342,
+          "severity": "high",
+          "message": "Unbounded interim response loop allows DoS: a malicious server can stream infinite &#x27;100 Continu"
+        },
+        {
+          "line": 568,
+          "severity": "high",
+          "message": "Unbounded trailer line reading allows DoS: a malicious server can stream infinite trailer lines, han"
+        }
+      ]
+    },
+    "tokens_used": 0,
+    "llm_calls": 0
+  }
+]
