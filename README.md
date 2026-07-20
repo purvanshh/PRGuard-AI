@@ -16,7 +16,7 @@
 
 ---
 
-PRGuard AI integrates with GitHub via webhooks and orchestrates a multi-agent analysis pipeline over every incoming pull request. Three independent agents — **Style**, **Logic**, and **Security** — run in parallel as Celery tasks. Their initial findings are persisted in a Redis-backed shared context store. The agents then undergo an iterative refinement loop moderated by a **Coordinator Agent** (up to three rounds), cross-examining each other's findings before converging. A **Confidence Arbitrator** aggregates the final outputs, computes weighted confidence scores, detects inter-agent disagreements, and posts a structured review comment with optional inline annotations directly to the pull request.
+Code review is a bottleneck in every engineering org: it consumes senior developer hours, slows delivery, and vulnerabilities slip through when reviews are rushed. PRGuard AI addresses this with a multi-agent system that analyzes pull requests across style, logic, and security dimensions using a mix of rule-based detectors, AST analysis, and LLM reasoning. In a real-world evaluation against CVE-fix PRs from python/cpython, the system achieved a 0.80 F1 score (0.86 precision, 0.75 recall).
 
 The system is built for production: asynchronous task queues with retry logic, PostgreSQL audit logging, circuit breakers on LLM calls, Redis-backed token budgeting, HMAC webhook verification, replay attack protection, rate limiting, sandboxed repository cloning with LRU-evicted caching, and structured JSON logging with OpenTelemetry trace propagation.
 
@@ -151,9 +151,9 @@ Every finding carries a `confidence_source` tag that maps to a numeric weight:
 
 | Source | Weight | Meaning |
 |--------|--------|---------|
-| `rule_based` | **0.9** | Deterministic pattern match — high certainty |
-| `llm_reasoning` | **0.6** | LLM-generated finding — moderate certainty |
-| `inferred` | **0.3** | Heuristic or indirect signal — low certainty |
+| `rule_based` | **0.9** | Deterministic pattern match: high certainty |
+| `llm_reasoning` | **0.6** | LLM-generated finding: moderate certainty |
+| `inferred` | **0.3** | Heuristic or indirect signal: low certainty |
 
 **Per-agent score:** `refined = (base_confidence + avg_issue_weight) / 2`, clamped to `[0.0, 1.0]`.
 
@@ -165,7 +165,7 @@ Every finding carries a `confidence_source` tag that maps to a numeric weight:
 
 ## Production Features
 
-PRGuard AI has been built across fifteen production-oriented phases:
+PRGuard AI has been built across fifteen production-oriented phases. The table below shows that production concerns (retry logic, rate limiting, tracing, security hardening, Helm charts) were built into the system at every stage, not bolted on after the fact.
 
 | Phase | Feature | Description |
 |-------|---------|-------------|
@@ -196,7 +196,7 @@ PRGuard AI has been built across fifteen production-oriented phases:
 - Python 3.11+
 - Docker and Docker Compose
 - A GitHub account with a repository to monitor
-- An NVIDIA NIM API key or OpenAI API key
+- A DeepSeek API key
 
 ### Docker (Recommended)
 
@@ -334,7 +334,7 @@ Reference: [`.env.example`](.env.example)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `POST` | `/webhook` | GitHub webhook receiver — HMAC-verified, replay-protected |
+| `POST` | `/webhook` | GitHub webhook receiver: HMAC-verified, replay-protected |
 | `GET` | `/review/{pr_id}` | Retrieve agent outputs and analysis trace for a given PR |
 | `GET` | `/health` | Aggregated dependency health check |
 | `GET` | `/health/ready` | Kubernetes readiness probe |
@@ -391,8 +391,8 @@ prguard-ai/
 - **Rate limiting** applied per repository and per GitHub App installation
 - **Global concurrency control** preventing worker queue saturation
 - **Sandboxed repository clones** with guaranteed cleanup on completion
-- **LLM output sanitization** — HTML escaping, non-printable character stripping, and per-agent issue caps
-- **Secrets never logged** — structured logging masks all sensitive configuration values
+- **LLM output sanitization**: HTML escaping, non-printable character stripping, and per-agent issue caps
+- **Secrets never logged**: structured logging masks all sensitive configuration values
 
 ---
 
@@ -416,7 +416,7 @@ prguard-ai/
 | Recall | 0.75 |
 | F1 | 0.80 |
 
-**Gap analysis:** Real-world F1 (0.80) matches synthetic F1 (0.82), indicating the system generalizes to unseen, real-world patches. 6/8 CVEs with security relevance were caught. 2 misses were transient LLM API failures under rapid-fire evaluation, not architectural gaps. 1 false positive was a rule-based XML detector hitting a test file.
+**Gap analysis:** Real-world F1 (0.80) matches synthetic F1 (0.82), indicating the system generalizes to unseen, real-world patches. Of the 8 security-relevant PRs, there were 5 clean catches, 1 partial detection (severity underestimated: CVE-2025-59375, the Expat XML bomb fix, was flagged with low-severity LLM issues but the core memory amplification vulnerability was not identified), and 2 misses. Both misses are attributed to silent empty responses from the LLM under rapid-fire evaluation; retry-with-backoff at the LLM call level is a known gap. 1 false positive was a rule-based XML detector hitting a test file.
 
 ### Running Evaluation
 
@@ -436,7 +436,7 @@ python scripts/analyze_real_results.py
 PRGuard AI is a research-grade system with the following known gaps:
 
 - **Rule-based detectors are shallow**: Pattern-matched detections (`detect_off_by_one`, `detect_none_dereference`, etc.) use simple regex heuristics that produce false positives on complex code. They are a complement to the LLM, not a replacement for static analysis tools like Semgrep or CodeQL.
-- **LLM cost and latency**: Each PR review triggers 12+ LLM calls (3 agents × 3 refinement rounds + coordinator + arbitrator + refinement messages). At GPT-4o pricing, a moderate PR costs ~$0.15–$0.40. The circuit breaker and token budget mitigate runaway costs but can silently skip analysis.
+- **LLM cost and latency**: Each PR review triggers 12+ LLM calls (3 agents x 3 refinement rounds + coordinator + arbitrator + refinement messages). At DeepSeek pricing ($0.50/M input tokens, $2.00/M output tokens), a moderate PR costs ~$0.01-$0.03. The circuit breaker and token budget mitigate runaway costs but can silently skip analysis.
 - **Multi-language support is uneven**: AST parsing and rule detectors are Python-heavy. Go, TypeScript, Rust, and other languages rely almost entirely on the LLM pass without strong static checks.
 - **No incremental analysis**: Every PR is fully re-analysed; there is no diff-aware caching of file-level analysis results across sequential PRs.
 - **Chunked PR analysis is not yet implemented**: For PRs exceeding 50 files or 5000 lines, the system truncates rather than chunking and merging.
@@ -463,6 +463,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines, branching con
 
 Built by [Purvansh Sahu](https://github.com/purvanshh) &nbsp;|&nbsp; 4th Year CS at Scaler School of Technology + BITS Pilani &nbsp;|&nbsp; ML Research Intern at IIT Madras
 
-LLM backend powered by NVIDIA NIM
+LLM backend powered by DeepSeek API (deepseek-chat)
 
 </div>
