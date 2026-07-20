@@ -16,7 +16,7 @@ def _safe_repo_root(repo_metadata: Dict[str, Any] | None = None) -> Path | None:
     meta = repo_metadata or {}
     sandbox_path = meta.get("sandbox_path")
     if sandbox_path:
-        return Path(str(sandbox_path))
+        return Path(str(sandbox_path)).resolve()
     return None
 
 
@@ -68,11 +68,29 @@ class AgentToolExecutor:
 
     def _resolve_path(self, raw_path: str) -> Path:
         path = Path(raw_path)
-        if path.is_absolute():
-            return path
         if self.repo_root is None:
-            return path
-        return self.repo_root / path
+            return path.resolve()
+        resolved = (path if path.is_absolute() else self.repo_root / path).resolve()
+        try:
+            resolved.relative_to(self.repo_root)
+        except ValueError as exc:
+            raise ValueError(f"Path escapes repository sandbox: {raw_path}") from exc
+        return resolved
+
+    def _repo_relative_path(self, raw_path: str) -> str:
+        path = self._resolve_path(raw_path)
+        if self.repo_root is None:
+            return str(path)
+        return str(path.relative_to(self.repo_root))
+
+    def _is_inside_repo(self, path: Path) -> bool:
+        if self.repo_root is None:
+            return True
+        try:
+            path.resolve().relative_to(self.repo_root)
+        except ValueError:
+            return False
+        return True
 
     def _read_file(self, args: Dict[str, Any]) -> ToolResult:
         path = self._resolve_path(str(args.get("path", "")))
@@ -96,7 +114,7 @@ class AgentToolExecutor:
         for path in self.repo_root.rglob("*"):
             if len(matches) >= limit:
                 break
-            if not path.is_file():
+            if not path.is_file() or not self._is_inside_repo(path):
                 continue
             try:
                 for idx, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
@@ -124,7 +142,7 @@ class AgentToolExecutor:
         }
 
     def _run_linter(self, args: Dict[str, Any]) -> ToolResult:
-        target = str(args.get("path", "."))
+        target = self._repo_relative_path(str(args.get("path", ".")))
         command = ["python3", "-m", "compileall", target]
         return ToolResult(tool="run_linter", output=self._run_command(command))
 
@@ -132,10 +150,10 @@ class AgentToolExecutor:
         target = str(args.get("target", "tests"))
         if self.repo_root is None:
             return ToolResult(tool="run_test", output={"skipped": True, "reason": "sandbox unavailable"})
-        test_path = self.repo_root / target
+        test_path = self._resolve_path(target)
         if not test_path.exists():
             return ToolResult(tool="run_test", output={"skipped": True, "reason": f"missing target: {target}"})
-        command = ["python3", "-m", "pytest", str(test_path), "-q", "-o", "addopts="]
+        command = ["python3", "-m", "pytest", str(test_path.relative_to(self.repo_root)), "-q", "-o", "addopts="]
         return ToolResult(tool="run_test", output=self._run_command(command))
 
     def _get_type_info(self, args: Dict[str, Any]) -> ToolResult:
@@ -165,7 +183,7 @@ class AgentToolExecutor:
         line = max(1, int(args.get("line", 1)))
         if self.repo_root is None:
             return ToolResult(tool="git_blame", output={"skipped": True, "reason": "sandbox unavailable"})
-        command = ["git", "blame", "-L", f"{line},{line}", "--", path]
+        command = ["git", "blame", "-L", f"{line},{line}", "--", self._repo_relative_path(path)]
         return ToolResult(tool="git_blame", output=self._run_command(command))
 
     def _dependency_scan(self, args: Dict[str, Any]) -> ToolResult:
@@ -186,9 +204,8 @@ class AgentToolExecutor:
         return ToolResult(tool="dependency_scan", output={"requirements": requirements, "suspicious": suspicious})
 
     def _check_formatting(self, args: Dict[str, Any]) -> ToolResult:
-        target = str(args.get("path", "."))
-        if self.repo_root is not None:
-            target = str(self.repo_root / target)
+        target_path = self._resolve_path(str(args.get("path", ".")))
+        target = str(target_path)
         if not Path(target).exists():
             return ToolResult(tool="check_formatting", output={"skipped": True, "reason": f"missing target: {target}"})
         command = ["python3", "-m", "ruff", "format", "--check", "--diff", target]
@@ -301,12 +318,14 @@ class AgentToolExecutor:
 
     def _secret_scan(self, args: Dict[str, Any]) -> ToolResult:
         target = str(args.get("path", "."))
-        search_root = self.repo_root if self.repo_root else Path(target)
+        search_root = self._resolve_path(target) if self.repo_root else Path(target).resolve()
         if not search_root.exists():
             return ToolResult(tool="secret_scan", output={"secrets_found": []})
         secrets: List[Dict[str, Any]] = []
         for path in search_root.rglob("*"):
-            if not path.is_file() or path.suffix in {".pyc", ".png", ".jpg", ".gif", ".svg", ".lock"}:
+            if not path.is_file() or not self._is_inside_repo(path):
+                continue
+            if path.suffix in {".pyc", ".png", ".jpg", ".gif", ".svg", ".lock"}:
                 continue
             if any(part.startswith(".") or part == "__pycache__" for part in path.parts):
                 continue
@@ -328,7 +347,7 @@ class AgentToolExecutor:
 
     def _check_auth_patterns(self, args: Dict[str, Any]) -> ToolResult:
         target = str(args.get("path", "."))
-        search_root = self.repo_root if self.repo_root else Path(target)
+        search_root = self._resolve_path(target) if self.repo_root else Path(target).resolve()
         if not search_root.exists():
             return ToolResult(tool="check_auth_patterns", output={"auth_issues": []})
         auth_issues: List[Dict[str, Any]] = []
@@ -341,6 +360,8 @@ class AgentToolExecutor:
             re.compile(r"(?i)authentication\s*=\s*None"),
         ]
         for path in search_root.rglob("*.py"):
+            if not self._is_inside_repo(path):
+                continue
             if any(part.startswith(".") or part == "__pycache__" for part in path.parts):
                 continue
             try:
