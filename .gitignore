@@ -43,4 +43,12 @@ logs/
 .mypy_cache/
 .cache/
 .chroma/
+.chromadb/
+.repo_cache/
+chroma_data/
+
+# Database files (SQLite → migrated to PostgreSQL)
+prguard_logs.sqlite
+*.db
+*.sqlite
 

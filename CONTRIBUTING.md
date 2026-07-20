@@ -1,8 +1,8 @@
-## Contributing to PRGuard AI
+# Contributing to PRGuard AI
 
-Thanks for your interest in contributing! This project is meant to be a polished open-source developer tool.
+Thanks for your interest in contributing! This project is a polished open-source AI-powered PR review tool.
 
-### 1. Getting Started
+## 1. Getting Started
 
 ```bash
 git clone https://github.com/your-org/prguard-ai.git
@@ -13,72 +13,93 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Set the required environment variables in `.env` (at least `OPENAI_API_KEY` and `REDIS_URL`).
+Set required environment variables in `.env`:
 
-### 2. Running Tests
+| Variable | Required | Description |
+|---|---|---|
+| `OPENAI_API_KEY` | Yes | OpenAI API key for LLM analysis |
+| `DATABASE_URL` | Yes | PostgreSQL connection string (e.g. `postgresql+asyncpg://user:pass@localhost:5432/prguard`) |
+| `REDIS_URL` | Yes | Redis URL for Celery broker (e.g. `redis://localhost:6379/0`) |
+| `GITHUB_TOKEN` | No | GitHub token for private repos (rate-limit boost) |
+| `SECRET_KEY` | Yes | Webhook signing secret |
 
-Run the unit test suite:
+## 2. Running the Full Stack (Docker Compose)
 
 ```bash
+docker compose up --build
+```
+
+This starts:
+- **API** on `http://localhost:8000` — health check at `/health`
+- **Dashboard** at `/dashboard`
+- **2 Celery workers** — process analysis tasks
+- **PostgreSQL** — persistent storage
+- **Redis** — message broker & result backend
+
+### Running locally (no Docker)
+
+```bash
+# Start Redis & PostgreSQL manually, then:
+uvicorn prguard_ai.main:app --reload --port 8000
+celery -A prguard_ai.task_queue.celery_app worker --loglevel=info
+```
+
+## 3. Running Tests
+
+```bash
+# Full test suite (251 tests, 79% coverage)
 pytest
+
+# Lint
+ruff check src/ tests/
+
+# Type check
+mypy src/
 ```
 
-Optionally run type checks (if you have `mypy` installed):
+## 4. Project Structure
 
-```bash
-mypy .
+```
+src/prguard_ai/
+├── agents/             # Analysis agents (3: security, reliability, confidence)
+├── analysis/           # Core analysis pipeline + arbitrator
+├── config/             # Settings (pydantic-settings)
+├── confidence/         # Confidence scoring
+├── cost/               # LLM budget management
+├── dashboard/          # FastAPI dashboard app
+├── db/                 # SQLAlchemy models + migrations (Alembic)
+├── gh_client/          # GitHub integration (webhooks, GraphQL client)
+├── llm/                # LLM provider abstraction (OpenAI, NVIDIA)
+├── schemas/            # Pydantic models
+├── security/           # Security analysis agent
+├── reliability/        # Reliability analysis agent
+├── task_queue/         # Celery tasks + worker configuration
+└── main.py             # FastAPI application entry point
 ```
 
-And linting (e.g. with `ruff` or `flake8`, if installed):
+The system uses **14 analysis tools** across **3 agent personas** (security, reliability, confidence), orchestrated by a **router** that selects the optimal LLM model per task.
 
-```bash
-ruff check .
-```
+## 5. Adding a New Analysis Agent
 
-### 3. Running the Demo
-
-**CLI demo**:
-
-```bash
-python scripts/prguard_demo.py path/to/repo diff.patch --record-demo
-```
-
-**Dashboard demo**:
-
-```bash
-uvicorn dashboard.app:app --reload
-```
-
-Then open:
-
-- `http://localhost:8000/dashboard`
-- `http://localhost:8000/demo`
-- `http://localhost:8000/dataset`
-
-### 4. Adding a New Analysis Agent
-
-1. Create a new module under `agents/`, e.g. `agents/performance_agent.py`.
-2. Implement a function with the signature:
+1. Create a module under `src/prguard_ai/agents/`, e.g. `performance_agent.py`.
+2. Implement a function returning `schemas.agent_output.AgentOutput`:
 
 ```python
-def analyze_performance(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -> AgentOutput:
+def analyze_performance(diff_text: str, repo_metadata: dict | None = None) -> AgentOutput:
     ...
 ```
 
-3. Return a `schemas.agent_output.AgentOutput` with:
-   - `agent` set to your agent name.
-   - `confidence` set to a float in `[0, 1]`.
-   - `issues` as a list of `Issue` objects.
-4. Wire the new agent into:
-   - `queue/task_queue.py` (add a Celery task).
-   - `github/webhook_server.py` (enqueue the new task and pass its results to the arbitrator).
-5. Add tests under `tests/` to cover your agent’s behavior.
+3. Wire it into:
+   - `src/prguard_ai/task_queue/tasks.py` — add a Celery task.
+   - `src/prguard_ai/gh_client/webhook.py` — enqueue the new task.
+4. Add tests in `tests/`.
 
-### 5. Pull Requests
+## 6. Pull Requests
 
-- Keep changes focused and well-scoped.
-- Add or update tests where appropriate.
-- Update documentation (`README.md` or `docs/`) if behavior or configuration changes.
+- Keep changes focused.
+- Add or update tests.
+- Update `README.md` or `docs/` if behavior changes.
+- Ensure `pytest` passes and `ruff check .` is clean.
 
-We’re happy to review contributions that improve security, reliability, developer experience, or agent quality.
+We welcome contributions that improve security, reliability, developer experience, or agent quality.
 
