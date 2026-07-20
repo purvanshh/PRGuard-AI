@@ -17,7 +17,6 @@ SUSPICIOUS_PROMPT_PATTERNS = (
     "developer message",
     "system prompt",
     "you are now",
-    "</diff>",
 )
 
 

@@ -96,6 +96,11 @@ class DetectorRegistry:
         DetectionRule("md5_hash", re.compile(r"hashlib\.md5\("), "medium", "security", "MD5 hash used; consider bcrypt or Argon2.", add_only=True),
         DetectionRule("template_injection", re.compile(r"Template\s*\(.*?(?:f[\"\']|user_input|\+\s*\w+)"), "high", "security", "Server-side template injection via unescaped user input.", add_only=True),
         DetectionRule("subprocess_no_shell", re.compile(r"subprocess\.(?:Popen|run|call)\s*\("), "medium", "security", "Subprocess call should specify shell=False explicitly.", add_only=True),
+        DetectionRule("xml_etree_parse", re.compile(r"ET\.fromstring|ET\.parse|xml\.etree|xml\.dom|xml\.sax"), "medium", "security", "XML parsing may be vulnerable to XML bomb / XXE. Use defusedxml.", add_only=True),
+        DetectionRule("http_no_timeout", re.compile(r"urllib\.request\.urlopen|httplib\.HTTPConnection|http\.client\.HTTPConnection"), "medium", "security", "HTTP request without explicit timeout — potential DoS via slow response.", add_only=True),
+        DetectionRule("unbounded_loop", re.compile(r"while\s+(?:True|1)\s*:"), "medium", "security", "Unbounded loop without break — potential memory amplification / DoS.", add_only=True),
+        DetectionRule("recursive_xml_entity", re.compile(r"<!ENTITY\s+\w+\s+SYSTEM|<!ENTITY\s+\w+\s+\"&"), "high", "security", "XML external entity expansion — XML bomb / billion laughs vulnerability.", add_only=True),
+        DetectionRule("unbounded_read", re.compile(r"read\s*\(\s*\)|readlines\s*\(\s*\)"), "low", "security", "Unbounded file/stream read — potential memory amplification if input is large.", add_only=True),
     ]
 
     _MAPPING = {
