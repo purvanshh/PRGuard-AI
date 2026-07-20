@@ -86,6 +86,19 @@ def _build_llm_input(diff_text: str, repo_examples: List[str]) -> str:
     )
 
 
+def _strip_markdown_fence(raw: str) -> str:
+    if not raw or not raw.strip():
+        return ""
+    stripped = raw.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    first_newline = stripped.find("\n")
+    last_fence = stripped.rfind("```")
+    if first_newline == -1 or last_fence <= first_newline:
+        return stripped
+    return stripped[first_newline + 1:last_fence].strip()
+
+
 def _parse_llm_issues(raw: str) -> List[Issue]:
     try:
         return parse_agent_issues(raw)[:20]
@@ -415,8 +428,7 @@ class StyleAgent(BaseAgent):
             text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
 
             # Parse refined response
-            from prguard_ai.llm.client import extract_json_obj_from_llm_response
-            clean = extract_json_obj_from_llm_response(text)
+            clean = _strip_markdown_fence(text)
             message = ""
             refined_issues_data = []
             try:

@@ -119,6 +119,19 @@ def _resolve_context_file_path(file_path: str, sandbox_path: str | None) -> Path
     return Path(sandbox_path) / candidate
 
 
+def _strip_markdown_fence(raw: str) -> str:
+    if not raw or not raw.strip():
+        return ""
+    stripped = raw.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    first_newline = stripped.find("\n")
+    last_fence = stripped.rfind("```")
+    if first_newline == -1 or last_fence <= first_newline:
+        return stripped
+    return stripped[first_newline + 1:last_fence].strip()
+
+
 def _parse_llm_issues(raw: str) -> List[Issue]:
     try:
         return parse_agent_issues(raw)[:20]
@@ -251,7 +264,6 @@ class LogicAgent(BaseAgent):
         """Refine logic agent issues and generate a dialogue message based on context."""
         from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
         from prguard_ai.analysis.diff_parser import extract_changed_files
-        from prguard_ai.llm.client import extract_json_obj_from_llm_response
 
         refine_prompt_path = Path(__file__).resolve().parent.parent.parent.parent / "prompts" / "logic_refine_prompt.txt"
         if refine_prompt_path.exists():
@@ -294,7 +306,7 @@ class LogicAgent(BaseAgent):
             text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
 
             # Parse refined response
-            clean = extract_json_obj_from_llm_response(text)
+            clean = _strip_markdown_fence(text)
             message = ""
             refined_issues_data = []
             try:

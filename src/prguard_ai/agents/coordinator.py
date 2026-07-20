@@ -7,7 +7,7 @@ from typing import Any, Dict, List
 from pydantic import TypeAdapter, validate_call
 
 from prguard_ai.schemas.context import ReviewContext
-from prguard_ai.llm.client import generate_analysis, extract_json_obj_from_llm_response
+from prguard_ai.llm.client import generate_analysis
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,13 @@ class CoordinatorAgent:
                 temperature=0.0,
                 pr_id=context.repo_metadata.get("pr_id") if context.repo_metadata else context.pr_id,
             )
-            data = json.loads(extract_json_obj_from_llm_response(text))
+            stripped = text.strip()
+            if stripped.startswith("```"):
+                first_newline = stripped.find("\n")
+                last_fence = stripped.rfind("```")
+                if first_newline != -1 and last_fence > first_newline:
+                    stripped = stripped[first_newline + 1:last_fence].strip()
+            data = json.loads(stripped)
             _get_coordinator_adapter().validate_python(data)
             critiques = [str(item).strip() for item in data.get("critiques", []) if str(item).strip()]
             steering = [str(item).strip() for item in data.get("steering_questions", []) if str(item).strip()]

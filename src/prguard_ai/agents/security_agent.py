@@ -40,6 +40,19 @@ MAX_TOKENS_PER_AGENT = 2000
 SUSPECT_KEYWORDS = ["eval(", "exec(", "subprocess.Popen", "os.system"]
 
 
+def _strip_markdown_fence(raw: str) -> str:
+    if not raw or not raw.strip():
+        return ""
+    stripped = raw.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    first_newline = stripped.find("\n")
+    last_fence = stripped.rfind("```")
+    if first_newline == -1 or last_fence <= first_newline:
+        return stripped
+    return stripped[first_newline + 1:last_fence].strip()
+
+
 def _load_prompt() -> str:
     from prguard_ai.prompts import load_prompt
 
@@ -197,7 +210,6 @@ class SecurityAgent(BaseAgent):
         """Refine security agent issues and generate a dialogue message based on context."""
         from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
         from prguard_ai.analysis.diff_parser import extract_changed_files
-        from prguard_ai.llm.client import extract_json_obj_from_llm_response
 
         refine_prompt_path = Path(__file__).resolve().parent.parent.parent.parent / "prompts" / "security_refine_prompt.txt"
         if refine_prompt_path.exists():
@@ -240,7 +252,7 @@ class SecurityAgent(BaseAgent):
             text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
 
             # Parse refined response
-            clean = extract_json_obj_from_llm_response(text)
+            clean = _strip_markdown_fence(text)
             message = ""
             refined_issues_data = []
             try:

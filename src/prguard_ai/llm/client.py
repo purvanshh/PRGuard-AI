@@ -11,6 +11,8 @@ from typing import Any, Dict, Tuple
 
 import openai
 
+from pydantic import BaseModel
+
 from prguard_ai.config.settings import settings
 from prguard_ai.observability.logging import log_llm_usage
 from prguard_ai.observability.metrics import LLM_TOKENS_USED
@@ -24,9 +26,16 @@ import redis
 
 logger = logging.getLogger(__name__)
 
+
 class TokenBudgetExceededError(Exception):
     """Exception raised when LLM token or cost budget is exceeded."""
     pass
+
+
+class LLMOutputError(Exception):
+    """Exception raised when LLM output fails Pydantic validation."""
+    pass
+
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2
@@ -38,6 +47,84 @@ MAX_TOKENS_PER_PR = settings.max_tokens_per_pr
 _PR_TOKEN_USAGE: Dict[str, int] = {}
 _LOCK = threading.Lock()
 _TRACER = get_tracer("llm")
+
+
+class LLMIssueResponse(BaseModel):
+    issues: list[Issue]
+
+
+class LLMRefineResponse(BaseModel):
+    refined_issues: list[Issue]
+    new_findings: list[Issue]
+    dropped_findings: list[int]
+
+
+class LLMCoordinatorResponse(BaseModel):
+    critiques: dict[str, str]
+
+
+class LLMClient:
+    def __init__(
+        self,
+        model: str | None = None,
+        max_tokens: int = 512,
+        temperature: float = 0.1,
+    ):
+        self.default_model = model or DEFAULT_MODEL
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+
+    def _get_client(self) -> openai.OpenAI:
+        return _get_client()
+
+    def generate_analysis(
+        self,
+        prompt: str,
+        response_schema: type[BaseModel] = LLMIssueResponse,
+        model: str | None = None,
+    ) -> BaseModel:
+        client = self._get_client()
+        model = model or self.default_model
+
+        try:
+            response = client.beta.chat.completions.parse(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are a code review agent."},
+                    {"role": "user", "content": prompt},
+                ],
+                response_format=response_schema,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+            )
+            return response.choices[0].message.parsed
+        except Exception as e:
+            logger.error(f"Structured output failed: {e}")
+            try:
+                return self._fallback_json_mode(prompt, response_schema)
+            except Exception as fallback_err:
+                raise LLMOutputError(
+                    f"Both structured output and JSON fallback failed: {e}, {fallback_err}"
+                ) from fallback_err
+
+    def _fallback_json_mode(
+        self,
+        prompt: str,
+        response_schema: type[BaseModel],
+    ) -> BaseModel:
+        client = self._get_client()
+        schema_json = response_schema.model_json_schema()
+        augmented_prompt = (
+            f"{prompt}\n\nRespond with JSON matching this schema:\n{schema_json}"
+        )
+        response = client.chat.completions.create(
+            model=self.default_model,
+            messages=[{"role": "user", "content": augmented_prompt}],
+            response_format={"type": "json_object"},
+            temperature=self.temperature,
+        )
+        raw = response.choices[0].message.content
+        return response_schema.model_validate_json(raw)
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -54,53 +141,34 @@ def _strip_markdown_fence(raw: str) -> str:
     last_fence = stripped.rfind("```")
     if first_newline == -1 or last_fence <= first_newline:
         return stripped
-    return stripped[first_newline + 1:last_fence].strip()
-
-
-def extract_json_from_llm_response(raw: str) -> str:
-    """Validate and return a JSON array response."""
-    stripped = _strip_markdown_fence(raw)
-    if not stripped:
-        return "[]"
-    data = json.loads(stripped)
-    if not isinstance(data, list):
-        raise ValueError("Expected LLM JSON array response.")
-    return json.dumps(data)
-
-
-def extract_json_obj_from_llm_response(raw: str) -> str:
-    """Validate and return a JSON object response."""
-    stripped = _strip_markdown_fence(raw)
-    if not stripped:
-        return "{}"
-    data = json.loads(stripped)
-    if not isinstance(data, dict):
-        raise ValueError("Expected LLM JSON object response.")
-    return json.dumps(data)
+    return stripped[first_newline + 1 : last_fence].strip()
 
 
 def parse_agent_issues(raw: str) -> list[Issue]:
     """Parse and validate an LLM issue array with the public Issue schema."""
-    data = json.loads(extract_json_from_llm_response(raw))
+    stripped = _strip_markdown_fence(raw)
+    if not stripped:
+        return []
+    data = json.loads(stripped)
+    if not isinstance(data, list):
+        raise ValueError("Expected LLM JSON array response.")
     return [Issue.validate_and_sanitize(item) for item in data]
 
 
 def parse_agent_output(raw: str) -> AgentOutput:
     """Parse and validate a complete structured agent response."""
-    data = json.loads(extract_json_obj_from_llm_response(raw))
+    stripped = _strip_markdown_fence(raw)
+    if not stripped:
+        return AgentOutput(agent="unknown", confidence=0.0)
+    data = json.loads(stripped)
+    if not isinstance(data, dict):
+        raise ValueError("Expected LLM JSON object response.")
     return AgentOutput.model_validate(data)
 
 
 def calculate_openai_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    """
-    Rough cost estimation in USD for OpenAI chat models.
-
-    Prices are approximate and can be adjusted as needed. This helper is
-    intentionally simple and only meant for relative reporting.
-    """
-    # Default to GPT-4o-style pricing.
-    prompt_rate = 5.0 / 1_000_000  # $5 / 1M tokens
-    completion_rate = 15.0 / 1_000_000  # $15 / 1M tokens
+    prompt_rate = 5.0 / 1_000_000
+    completion_rate = 15.0 / 1_000_000
 
     m = model.lower()
     if "gpt-4o" in m:
@@ -118,6 +186,7 @@ def calculate_openai_cost(model: str, prompt_tokens: int, completion_tokens: int
 
     cost = prompt_tokens * prompt_rate + completion_tokens * completion_rate
     return float(round(cost, 6))
+
 
 def _get_client() -> openai.OpenAI:
     nvidia_key = settings.nvidia_api_key
@@ -154,7 +223,7 @@ def _check_and_update_budget(pr_id: str | None, requested_tokens: int) -> None:
                         allowed = remaining
                     pipe.multi()
                     pipe.incrby(key, allowed)
-                    pipe.expire(key, 3600)  # 1 hour TTL
+                    pipe.expire(key, 3600)
                     pipe.execute()
                     break
                 except (redis.WatchError, redis.exceptions.WatchError):
@@ -184,13 +253,6 @@ def generate_analysis(
     use_cache: bool = True,
     expect_json: bool = True,
 ) -> Tuple[str, Dict[str, Any]]:
-    """
-    Call the OpenAI API with retry and basic rate-limit handling.
-
-    Enforces per-request and per-PR token budgets. When `OPENAI_API_KEY` is not
-    configured (e.g. in local or CI test runs), this returns a deterministic
-    stub response instead of calling the external API.
-    """
     offline_mode = settings.prguard_offline_mode
     nvidia_key = settings.nvidia_api_key or settings.openai_api_key
     route = model_router.route(agent, prompt)
@@ -203,7 +265,6 @@ def generate_analysis(
         if cached is not None:
             return cached
 
-    # Offline/test mode: when explicitly disabled or no API key, return a stub response.
     if offline_mode or not nvidia_key or "PYTEST_CURRENT_TEST" in os.environ:
         if offline_mode:
             logger.info("Offline mode enabled; returning stub response from generate_analysis.")
@@ -221,7 +282,6 @@ def generate_analysis(
             "route_complexity": route.complexity,
             "cache_hit": False,
         }
-        # Agents expect JSON; an empty list means "no issues".
         semantic_cache.set(f"{agent}:{prompt}", "[]", meta)
         return "[]", meta
 
@@ -229,12 +289,11 @@ def generate_analysis(
         if model == DEFAULT_MODEL:
             model = "gpt-4o"
 
-    _get_client()  # validate key early
+    _get_client()
 
     requested = min(max_tokens, settings.max_tokens_per_request)
     _check_and_update_budget(pr_id, requested)
 
-    # Repository-level cost budget check (per day).
     repo_name: str | None = None
     if pr_id and "#" in pr_id:
         repo_name = pr_id.split("#", 1)[0]
@@ -280,7 +339,6 @@ def generate_analysis(
                     "cache_hit": False,
                 }
 
-                # Metrics and cost tracking.
                 total_tokens = int(meta["total_tokens"])
                 prompt_tokens = int(meta["prompt_tokens"])
                 completion_tokens = int(meta["completion_tokens"])
@@ -323,7 +381,7 @@ def generate_analysis(
                 if attempt == MAX_RETRIES:
                     raise
                 time.sleep(RETRY_BACKOFF_SECONDS * attempt)
-            except Exception as exc:  # pragma: no cover
+            except Exception as exc:
                 last_error = exc
                 span.record_exception(exc)
                 logger.exception("Unexpected error calling OpenAI.")
@@ -336,8 +394,11 @@ def generate_analysis(
 
 
 __all__ = [
-    "extract_json_from_llm_response",
-    "extract_json_obj_from_llm_response",
+    "LLMClient",
+    "LLMIssueResponse",
+    "LLMRefineResponse",
+    "LLMCoordinatorResponse",
+    "LLMOutputError",
     "parse_agent_issues",
     "parse_agent_output",
     "generate_analysis",
@@ -352,10 +413,8 @@ __all__ = [
 _last_llm_health_check = 0.0
 _last_llm_health_status = "unknown"
 
+
 def check_llm_health() -> str:
-    """
-    Probe the LLM endpoint to verify API availability, caching the status for 30 seconds.
-    """
     global _last_llm_health_check, _last_llm_health_status
     now = time.time()
     if now - _last_llm_health_check < 30.0:
@@ -374,7 +433,6 @@ def check_llm_health() -> str:
 
     try:
         client = _get_client()
-        # Use a very small chat completion request as a ping
         client.chat.completions.create(
             model="gpt-4o" if not settings.nvidia_api_key else "openai/gpt-oss-120b",
             messages=[{"role": "user", "content": "ping"}],

@@ -8,6 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Sequence
 
 from prguard_ai.agents.tools import AgentToolExecutor, ToolCallRecord, ToolInvocation
+from prguard_ai.llm.client import LLMClient, LLMIssueResponse, LLMRefineResponse
 from prguard_ai.policy.engine import apply_policy_to_issues, filter_diff_by_policy, load_effective_policy
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
@@ -19,9 +20,14 @@ class BaseAgent(ABC):
     empty_confidence: float = 0.5
     max_react_iterations: int = 3
 
-    def __init__(self, repo_metadata: Dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        repo_metadata: Dict[str, Any] | None = None,
+        llm: LLMClient | None = None,
+    ) -> None:
         self.repo_metadata = repo_metadata or {}
         self.executor = AgentToolExecutor(self.repo_metadata)
+        self.llm = llm or LLMClient()
         self.reasoning_trace: List[str] = []
         self.tool_records: List[ToolCallRecord] = []
         self.llm_skipped: bool = False
@@ -126,7 +132,6 @@ class BaseAgent(ABC):
 
         issues = self.synthesize_issues(diff_text, tool_outputs)
 
-        # ReAct verification loop: check if findings need more evidence
         for iteration in range(self.max_react_iterations - 1):
             tool_outputs = self._verify_with_tools(issues, diff_text, tool_outputs)
             new_issues = self.synthesize_issues(diff_text, tool_outputs)
@@ -144,26 +149,55 @@ class BaseAgent(ABC):
             tool_calls=[record.model_dump() for record in self.tool_records],
         )
 
+    def _synthesize_with_llm(
+        self,
+        prompt: str,
+        pr_id: str | None = None,
+    ) -> list[Issue]:
+        try:
+            response = self.llm.generate_analysis(
+                prompt=prompt,
+                response_schema=LLMIssueResponse,
+            )
+            return response.issues
+        except Exception:
+            from prguard_ai.llm.client import generate_analysis, parse_agent_issues
+            text, _ = generate_analysis(prompt, max_tokens=512, pr_id=pr_id)
+            return parse_agent_issues(text)
+
+    def _refine_with_llm(
+        self,
+        prompt: str,
+        pr_id: str | None = None,
+    ) -> tuple[list[Issue], list[Issue], list[int]]:
+        try:
+            response = self.llm.generate_analysis(
+                prompt=prompt,
+                response_schema=LLMRefineResponse,
+            )
+            return response.refined_issues, response.new_findings, response.dropped_findings
+        except Exception:
+            from prguard_ai.llm.client import generate_analysis
+            from prguard_ai.llm.client import parse_agent_output
+            text, _ = generate_analysis(prompt, max_tokens=512, pr_id=pr_id)
+            try:
+                parsed = parse_agent_output(text)
+                return parsed.issues, [], []
+            except Exception:
+                return [], [], []
+
     def _prompt_json(self, prompt: str, *, max_tokens: int, pr_id: str | None = None, expect_object: bool = False) -> Any:
         from prguard_ai.llm.client import (
-            extract_json_from_llm_response,
-            extract_json_obj_from_llm_response,
             generate_analysis,
         )
 
         raw, _usage = generate_analysis(prompt, max_tokens=max_tokens, pr_id=pr_id)
-        extracted = extract_json_obj_from_llm_response(raw) if expect_object else extract_json_from_llm_response(raw)
-        result = json.loads(extracted)
-        assert isinstance(result, (list, dict)), f"_prompt_json expected list or dict, got {type(result)}"
-        return result
+        from prguard_ai.llm.client import parse_agent_issues, parse_agent_output
+        if expect_object:
+            return parse_agent_output(raw)
+        return parse_agent_issues(raw)
 
     def refine_with_tools(self, ctx: Any, agent_output: AgentOutput) -> tuple[str, AgentOutput]:
-        """Run refinement with tool augmentation.
-
-        Calls relevant tools based on coordinator critiques,
-        appends tool evidence to context dialogue, then delegates
-        to the agent's existing refine() method.
-        """
         from prguard_ai.analysis.diff_parser import extract_changed_files
         from prguard_ai.schemas.context import DialogueTurn
 
