@@ -449,6 +449,10 @@ The `pr_id` was `None` because the prompt injection detector reads the PR number
 
 **Lesson:** When you have 6 monitoring signals all firing at once, you stop believing any of them. Fewer, quieter, meaningful alerts beat a dashboard full of red.
 
+---
+
+## Known Limitations
+
 PRGuard AI is a research-grade system with the following known gaps:
 
 - **Rule-based detectors are shallow**: Pattern-matched detections (`detect_off_by_one`, `detect_none_dereference`, etc.) use simple regex heuristics that produce false positives on complex code. They are a complement to the LLM, not a replacement for static analysis tools like Semgrep or CodeQL.
