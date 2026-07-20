@@ -30,9 +30,8 @@ services:
 
   worker:
     build: .
-    container_name: prguard-worker
     init: true
-    command: celery -A prguard_ai.task_queue.celery_app worker --loglevel=INFO --concurrency=3 -Q style,logic,security,arbitrator,celery
+    command: celery -A prguard_ai.task_queue.celery_app worker --loglevel=INFO --concurrency=3 --uid=nobody -Q style,logic,security,arbitrator,celery
     environment:
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}

@@ -90,7 +90,14 @@ def format_pr_review(report: dict) -> str:
     lines.append("## PRGuard AI Review")
     lines.append("")
     if not degraded:
-        lines.append(f"**Confidence Score:** {report.get('overall_confidence', 0.0):.2f}")
+        tier = str(report.get("aggregate_tier", "low")).title()
+        breakdown = report.get("tier_breakdown", {}) or {}
+        lines.append(
+            f"**Confidence:** {tier} "
+            f"({breakdown.get('rule_based', 0)} rule-based, "
+            f"{breakdown.get('llm_reasoning', 0)} LLM-reasoned, "
+            f"{breakdown.get('verified', 0)} verified by tool)"
+        )
         lines.append("")
 
     agent_sections: Dict[str, List[dict]] = {"style": [], "logic": [], "security": []}

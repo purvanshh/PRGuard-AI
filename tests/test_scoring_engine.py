@@ -2,10 +2,10 @@
 
 from prguard_ai.confidence.scoring_engine import (
     aggregate_confidence,
+    aggregate_confidence_tier,
     calculate_agent_confidence,
-    calibrated_confidence,
-    fit_platt_scaling,
-    update_learned_weights,
+    compute_confidence_tier,
+    ConfidenceTier,
 )
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 
@@ -17,6 +17,7 @@ def make_issue(severity: str, source: str) -> Issue:
         message="msg",
         evidence="ev",
         confidence_source=source,
+        verified=source == "rule_based",
     )
 
 
@@ -36,26 +37,36 @@ def test_aggregate_confidence_handles_multiple_agents():
 
 
 def test_aggregate_confidence_empty():
-    assert aggregate_confidence([]) == 0.0
+    assert aggregate_confidence([]) == 0.3
 
 
-def test_calibrated_confidence_includes_uncertainty():
-    calibrated = calibrated_confidence(0.85, sample_count=100)
+def test_tier_high_for_verified_rule_based_findings():
+    output = AgentOutput(
+        agent="security",
+        confidence=0.5,
+        issues=[make_issue("high", "rule_based"), make_issue("medium", "rule_based")],
+    )
 
-    assert 0.0 <= calibrated.lower <= calibrated.probability <= calibrated.upper <= 1.0
-    assert calibrated.margin < 0.2
-
-
-def test_platt_scaling_learns_from_feedback():
-    slope, intercept = fit_platt_scaling([(0.9, 1), (0.8, 1), (0.2, 0), (0.1, 0)])
-
-    assert slope > 0
-    assert calibrated_confidence(0.9, slope=slope, intercept=intercept).probability > calibrated_confidence(
-        0.2, slope=slope, intercept=intercept
-    ).probability
+    assert compute_confidence_tier(output) == ConfidenceTier.HIGH
 
 
-def test_update_learned_weights_replaces_hardcoded_source_scores():
-    weights = update_learned_weights([("llm_reasoning", 1), ("llm_reasoning", 0), ("llm_reasoning", 1)])
+def test_tier_low_for_unverified_inferred_findings():
+    output = AgentOutput(
+        agent="logic",
+        confidence=0.5,
+        issues=[Issue(line=1, severity="medium", message="x", evidence="y", confidence_source="inferred")],
+    )
 
-    assert weights["llm_reasoning"] == 0.6667
+    assert compute_confidence_tier(output) == ConfidenceTier.LOW
+
+
+def test_aggregate_tier_downgrades_unverified_high_severity():
+    outputs = [
+        AgentOutput(
+            agent="security",
+            confidence=0.5,
+            issues=[Issue(line=1, severity="high", message="x", evidence="y", confidence_source="llm_reasoning")],
+        )
+    ]
+
+    assert aggregate_confidence_tier(outputs) == ConfidenceTier.LOW

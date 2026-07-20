@@ -114,8 +114,8 @@ def test_degraded_formatting():
 
     markdown_comment = format_pr_review(report)
 
-    # In degraded mode, "Confidence Score" and "Disagreement Summary" must NOT be in markdown
-    assert "Confidence Score" not in markdown_comment
+    # In degraded mode, confidence and disagreement summary must NOT be in markdown
+    assert "**Confidence:**" not in markdown_comment
     assert "Disagreement Summary" not in markdown_comment
     # But files and issue details should be there
     assert "Too long line" in markdown_comment
@@ -123,5 +123,5 @@ def test_degraded_formatting():
     # In normal mode (degraded=False), they should be present
     report["degraded"] = False
     normal_markdown = format_pr_review(report)
-    assert "Confidence Score" in normal_markdown
+    assert "**Confidence:**" in normal_markdown
     assert "Disagreement Summary" in normal_markdown

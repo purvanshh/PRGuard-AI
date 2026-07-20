@@ -215,7 +215,7 @@ class TestPullRequestReportSchema:
     def test_to_markdown_confidence_format(self):
         report = self._make_report(overall_confidence=0.856789)
         md = report.to_markdown()
-        assert "0.86" in md
+        assert "**Confidence:**" in md
 
 
 # ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ class Issue(BaseModel):
         default=None,
         description="Optional path to the file where the issue was detected.",
     )
+    verified: bool = Field(default=False, description="True when evidence was verified against source.")
 
     @field_validator("severity")
     @classmethod

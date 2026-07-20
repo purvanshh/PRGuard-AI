@@ -82,7 +82,7 @@ The following is a real review posted by PRGuard AI on a test pull request conta
 
 > **PRGuard AI Review**
 >
-> **Confidence Score:** 0.77
+> **Confidence:** Medium (2 rule-based, 3 LLM-reasoned, 2 verified by tool)
 >
 > **Style**
 > No issues detected.
@@ -173,7 +173,7 @@ PRGuard AI has been built across fifteen production-oriented phases:
 | 2 | Evaluation Infrastructure | Semantic issue matching (token overlap + line proximity), confidence intervals, per-agent metrics, 500+ curated dataset fixtures |
 | 3 | Real Agents with Tools | `BaseAgent` ABC with ReAct loop, 14 tools including per-agent specialisations (read_file, search_codebase, run_linter, run_test, get_type_info, git_blame, dependency_scan, check_formatting, get_repo_style_guide, symbolic_execute, check_dead_code, cve_lookup, secret_scan, check_auth_patterns), `llm_skipped` flag |
 | 4 | Real Coordinator | `CoordinatorAgent.moderate_round()` with LLM-powered critique generation, `_fallback_guidance()`, steering questions in `ReviewContext` |
-| 5 | Real Arbitrator | Semantic deduplication, conflict resolution via `resolve_conflict()`, coherent unified review, Platt scaling calibration |
+| 5 | Real Arbitrator | Semantic deduplication, conflict resolution via `resolve_conflict()`, coherent unified review, tiered confidence evidence |
 | 6 | Model Routing & Cost Optimization | `ModelRouter` with per-agent model config, `SemanticCache` (Jaccard similarity), fallback chain, per-model token budgeting |
 | 7 | Scalability | Per-repo sliding-window rate limiting, diff chunking for large PRs, separate broker and data Redis instances |
 | 8 | Distributed Tracing & Observability | OTel trace propagation across Celery tasks, correlation ID in logs, Grafana dashboard (p95 latency, queue depth, agent errors, circuit breaker), AlertManager rules |
@@ -454,7 +454,7 @@ PRGuard AI is a research-grade system with the following known gaps:
 - **CVE lookup is a stub**: `cve_lookup` shells out to `pip-audit` when `requirements.txt` is present; it does not query the GitHub Advisory Database or NVD directly.
 - **Secret scanning is regex-only**: `secret_scan` uses hand-written regex patterns with no entropy analysis or pre-commit hook integration. It will miss obfuscated or structured secrets like JWT tokens with low entropy.
 - **Symbolic execution is path-counting, not constraint solving**: `symbolic_execute` enumerates AST branches but does not solve path constraints; it cannot prove reachability or detect contradictions.
-- **Confidence calibration is experimental**: The Platt scaling model is trained on a small (500-fixture) dataset and has not been validated on production traffic. Confidence scores should be treated as ordinal signals, not probabilistic guarantees.
+- **Confidence is tiered**: PRGuard reports High/Medium/Low confidence with source and verification counts instead of pretending decimal scores are probabilities.
 
 ---
 

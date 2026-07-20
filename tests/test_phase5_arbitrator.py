@@ -1,5 +1,4 @@
 from prguard_ai.agents.arbitrator_agent import (
-    calibrate_confidence,
     deduplicate_issues,
     resolve_conflicts,
 )
@@ -43,12 +42,6 @@ def test_resolve_conflicts_reports_same_line_severity_disagreement():
     assert "app.py:7" in conflicts[0]
 
 
-def test_calibrate_confidence_is_bounded():
-    assert 0.0 <= calibrate_confidence(-1.0) <= 1.0
-    assert 0.0 <= calibrate_confidence(2.0) <= 1.0
-    assert calibrate_confidence(0.8) > calibrate_confidence(0.4)
-
-
 def test_report_markdown_is_single_narrative_findings_section():
     report = PullRequestReport(
         overall_confidence=0.77,
@@ -60,4 +53,5 @@ def test_report_markdown_is_single_narrative_findings_section():
 
     assert "### Findings" in markdown
     assert "### Style" not in markdown
+    assert "**Confidence:**" in markdown
     assert "Confidence basis" in markdown

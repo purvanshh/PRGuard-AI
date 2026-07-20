@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-import math
 import re
 from collections import defaultdict
 from typing import Dict, Iterable, List
 
-from prguard_ai.confidence.scoring_engine import aggregate_confidence
+from prguard_ai.confidence.scoring_engine import (
+    aggregate_confidence,
+    aggregate_confidence_tier,
+    confidence_breakdown,
+)
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
 from prguard_ai.schemas.pr_report import PullRequestReport
 from prguard_ai.schemas.context import ReviewContext
@@ -119,18 +122,9 @@ def resolve_conflicts(outputs: Iterable[AgentOutput]) -> List[str]:
     return conflicts
 
 
-def calibrate_confidence(raw_score: float, slope: float = 4.0, midpoint: float = 0.58) -> float:
-    """Apply a lightweight Platt-style calibration curve to aggregate confidence."""
-    raw = max(0.0, min(1.0, raw_score))
-    calibrated = 1.0 / (1.0 + math.exp(-slope * (raw - midpoint)))
-    return round(max(0.0, min(1.0, calibrated)), 4)
-
-
 def aggregate_confidence_with_weights(outputs: Iterable[AgentOutput]) -> float:
-    """
-    Wrapper over aggregate_confidence for clarity.
-    """
-    return calibrate_confidence(aggregate_confidence(outputs))
+    """Legacy numeric wrapper for internal metrics."""
+    return aggregate_confidence(outputs)
 
 
 def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullRequestReport:
@@ -149,6 +143,7 @@ def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullR
     if not successful_outputs:
         report = PullRequestReport(
             overall_confidence=0.0,
+            aggregate_tier=aggregate_confidence_tier([]),
             agent_outputs=outputs,
             issues=[],
         )
@@ -163,6 +158,8 @@ def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullR
 
     report = PullRequestReport(
         overall_confidence=overall_confidence,
+        aggregate_tier=aggregate_confidence_tier(successful_outputs),
+        tier_breakdown=confidence_breakdown(raw_issues),
         agent_outputs=outputs,
         issues=issues,
     )
@@ -174,7 +171,6 @@ def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullR
 __all__ = [
     "arbitrate_confidence",
     "aggregate_confidence_with_weights",
-    "calibrate_confidence",
     "deduplicate_issues",
     "detect_agent_disagreements",
     "resolve_conflicts",

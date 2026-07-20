@@ -6,6 +6,8 @@ from typing import Dict, List
 
 from pydantic import BaseModel, Field
 
+from prguard_ai.confidence.scoring_engine import ConfidenceTier, confidence_breakdown
+
 from .agent_output import AgentOutput, Issue
 
 
@@ -20,7 +22,12 @@ class PullRequestReport(BaseModel):
     )
     confidence_interval: tuple[float, float] | None = Field(
         default=None,
-        description="Lower and upper calibrated confidence bounds.",
+        description="Deprecated numeric compatibility bounds.",
+    )
+    aggregate_tier: ConfidenceTier = Field(default=ConfidenceTier.LOW, description="Tiered review confidence.")
+    tier_breakdown: Dict[str, int] = Field(
+        default_factory=dict,
+        description="Raw evidence counts behind the confidence tier.",
     )
     agent_outputs: List[AgentOutput] = Field(
         default_factory=list, description="Per-agent structured outputs."
@@ -39,12 +46,13 @@ class PullRequestReport(BaseModel):
         lines: List[str] = []
         lines.append("## PRGuard AI Review")
         lines.append("")
-        if self.confidence_interval:
-            lower, upper = self.confidence_interval
-            margin = max(self.overall_confidence - lower, upper - self.overall_confidence)
-            lines.append(f"**Confidence Score:** {self.overall_confidence:.2f} +/- {margin:.2f}")
-        else:
-            lines.append(f"**Confidence Score:** {self.overall_confidence:.2f}")
+        breakdown = self.tier_breakdown or confidence_breakdown(self.issues)
+        lines.append(
+            f"**Confidence:** {self.aggregate_tier.value.title()} "
+            f"({breakdown.get('rule_based', 0)} rule-based, "
+            f"{breakdown.get('llm_reasoning', 0)} LLM-reasoned, "
+            f"{breakdown.get('verified', 0)} verified by tool)"
+        )
         lines.append("")
 
         lines.append("### Findings")
