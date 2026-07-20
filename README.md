@@ -28,7 +28,6 @@ The system is built for production: asynchronous task queues with retry logic, P
 - [Example Output](#example-output)
 - [Agent Breakdown](#agent-breakdown)
 - [Confidence Scoring](#confidence-scoring)
-- [Production Features](#production-features)
 - [Setup](#setup)
 - [GitHub Webhook Configuration](#github-webhook-configuration)
 - [Environment Variables](#environment-variables)
@@ -73,6 +72,8 @@ flowchart TD
     ARB --> C2["Inline Comments"]
     ARB --> C3["Audit Log (PostgreSQL)"]
 ```
+
+
 
 ---
 
@@ -162,30 +163,6 @@ Every finding carries a `confidence_source` tag that maps to a numeric weight:
 **Disagreement detection:** The arbitrator compares severity distributions across agents and flags the review when one agent reports high-severity findings that another does not.
 
 ---
-
-## Production Features
-
-PRGuard AI has been built across fifteen production-oriented phases. The table below shows that production concerns (retry logic, rate limiting, tracing, security hardening, Helm charts) were built into the system at every stage, not bolted on after the fact.
-
-| Phase | Feature | Description |
-|-------|---------|-------------|
-| 1 | Foundation Repair | Docker Compose with healthchecks, sandbox deletion bug fix, TOCTOU race via Redis `setnx`, `task_acks_late`, dead-letter queue, idempotent `post_review` via comment marker digest |
-| 2 | Evaluation Infrastructure | Semantic issue matching (token overlap + line proximity), confidence intervals, per-agent metrics, 500+ curated dataset fixtures |
-| 3 | Real Agents with Tools | `BaseAgent` ABC with ReAct loop, 14 tools including per-agent specialisations (read_file, search_codebase, run_linter, run_test, get_type_info, git_blame, dependency_scan, check_formatting, get_repo_style_guide, symbolic_execute, check_dead_code, cve_lookup, secret_scan, check_auth_patterns), `llm_skipped` flag |
-| 4 | Real Coordinator | `CoordinatorAgent.moderate_round()` with LLM-powered critique generation, `_fallback_guidance()`, steering questions in `ReviewContext` |
-| 5 | Real Arbitrator | Semantic deduplication, conflict resolution via `resolve_conflict()`, coherent unified review, tiered confidence evidence |
-| 6 | Model Routing & Cost Optimization | `ModelRouter` with per-agent model config, `SemanticCache` (Jaccard similarity), fallback chain, per-model token budgeting |
-| 7 | Scalability | Per-repo sliding-window rate limiting, diff chunking for large PRs, separate broker and data Redis instances |
-| 8 | Distributed Tracing & Observability | OTel trace propagation across Celery tasks, correlation ID in logs, Grafana dashboard (p95 latency, queue depth, agent errors, circuit breaker), AlertManager rules |
-| 9 | Security Hardening | Secret redaction, `public_error_code()`, strict Pydantic webhook payload validation, path traversal blocking, `git clone --config core.hooksPath=/dev/null` |
-| 10 | Human-in-the-Loop | `HumanReviewQueue` with confidence threshold auto-posting, Flask approval dashboard, escalation tracking, Alembic migration |
-| 11 | Policy Engine | `.prguard.yml` parser, org-level inheritance, ignored paths, severity thresholds, required reviewers, critical path elevation |
-| 12 | Online Feedback Loop | GitHub reaction collection, finding-linked feedback storage, confidence recalibration, A/B routing, shadow-run records |
-| 13 | Prompt Management | Versioned prompts, env-based feature flags, canary rollout helpers, model-run registry |
-| 14 | Production Deployability | Helm chart, Kubernetes probes, ConfigMap/Secret wiring, resource requests/limits, Terraform AWS starter module |
-| 15 | Final Polish | Evaluation report v2, demo checklist, submission notes, and architecture decision records |
-| 16 | Per-Agent Tool Specialization | Each agent gets a unique tool set: Style → `check_formatting` + `get_repo_style_guide`; Logic → `symbolic_execute` + `check_dead_code`; Security → `cve_lookup` + `secret_scan` + `check_auth_patterns`. `analyze_tool_needs()` reasons dynamically about which tools to invoke. |
-| 17 | Honest Documentation | README updated with known limitations, real-world performance characteristics, and accurate test/tool counts. Stale ADRs refreshed. |
 
 ---
 
@@ -441,7 +418,36 @@ python scripts/analyze_real_results.py
 
 ---
 
-## Known Limitations
+## Production Incidents
+
+### The Batch Review That Vanished
+
+Running 40 PRs through the pipeline was supposed to be automated. Instead it was 3 AM, two terminals deep, chasing a process that refused to finish.
+
+**What happened:** The batch review script launched 4 parallel workers. 20 minutes later — no output, no errors, no results file. `ps aux` showed nothing. The process had been silently killed. No crash log, no traceback, nothing.
+
+**Root cause chain:**
+1. The `ThreadPoolExecutor` context manager exits on any unhandled exception in a worker thread
+2. The security agent's `_parse_llm_issues` calls `json.loads()` on the LLM response
+3. DeepSeek occasionally truncates its JSON mid-string (one response ended with `"Unlimited chunked trailer` — no closing quote, no closing brace)
+4. `json.JSONDecodeError` propagated uncaught out of the worker thread
+5. The `with ThreadPoolExecutor() as pool:` block killed the remaining workers on exit
+6. No `try/except` around the parse call, no `finally:` block to flush partial results
+
+**The fix that held:**
+- Wrapped `json.loads()` in a `try/except` that records the raw response for debugging instead of crashing
+- Changed from writing results once at the end to saving after every completed PR (incremental checkpoint)
+- Added `--resume` flag that skips already-completed PRs by reading the partial results file
+
+**The detail that still bothers me:** The `TokenBudget.used` property returned 0 for every single one of the 40 PRs. The token counter was wired up but never actually called during agent execution. So the evaluation report shows "Total tokens: 0" — a useless number. The tracking code exists, it's just not plugged into the agent loop.
+
+### The "suspicious LLM response for PR None" Warning
+
+Every PR that went through tripped a log line: `Style agent: suspicious LLM response for PR None — possible prompt injection`.
+
+The `pr_id` was `None` because the prompt injection detector reads the PR number from the review context, and the batch runner passes the diff text directly to agents without building a `ReviewContext` first. The injection detector worked exactly as coded — it just got `None` for the PR number and flagged it anyway. No actual injection, just noisy logs that eroded trust in the monitoring.
+
+**Lesson:** When you have 6 monitoring signals all firing at once, you stop believing any of them. Fewer, quieter, meaningful alerts beat a dashboard full of red.
 
 PRGuard AI is a research-grade system with the following known gaps:
 
