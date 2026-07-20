@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Sequence
+
+logger = logging.getLogger(__name__)
 
 from prguard_ai.agents.tools import AgentToolExecutor, ToolCallRecord, ToolInvocation
 from prguard_ai.llm.client import LLMClient, LLMIssueResponse, LLMRefineResponse
@@ -120,6 +123,33 @@ class BaseAgent(ABC):
         return tool_outputs
 
     def run_react_loop(self, diff_text: str) -> AgentOutput:
+        from prguard_ai.security.prompt_injection import PromptInjectionDetector, sanitize_diff_for_prompt
+
+        detector = PromptInjectionDetector()
+        check = detector.detect(diff_text)
+        if check.risk_score > 0.7:
+            logger.critical(
+                "High-risk injection detected: %s", check.matched_patterns
+            )
+            return AgentOutput(
+                agent=self.agent_name,
+                issues=[
+                    Issue(
+                        line=0,
+                        severity="high",
+                        message="Potential prompt injection detected in PR diff. Manual review required.",
+                        evidence="",
+                        confidence_source="rule_based",
+                        verified=True,
+                    )
+                ],
+                llm_skipped=True,
+            )
+        if check.risk_score > 0.3:
+            logger.warning(
+                "Medium-risk content flagged: %s", check.matched_patterns
+            )
+        diff_text = sanitize_diff_for_prompt(diff_text)
         diff_text = filter_diff_by_policy(diff_text, self.policy)
         self.reasoning_trace.append(f"{self.agent_name}: observe diff and determine tool needs")
 

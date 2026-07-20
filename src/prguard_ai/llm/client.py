@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import time
 from typing import Any, Dict, Tuple
@@ -125,6 +126,37 @@ class LLMClient:
         )
         raw = response.choices[0].message.content
         return response_schema.model_validate_json(raw)
+
+
+class LLMOutputValidator:
+    def validate(self, raw_response: str, expected_schema: type[BaseModel]) -> bool:
+        from prguard_ai.security.prompt_injection import PromptInjectionDetector
+
+        if not raw_response.strip():
+            return False
+        detector = PromptInjectionDetector()
+        check = detector.detect(raw_response)
+        if not check.clean:
+            logger.warning(
+                "LLM output contains injection patterns: %s", check.matched_patterns
+            )
+            return False
+        try:
+            expected_schema.model_validate_json(raw_response)
+            return True
+        except Exception:
+            return False
+
+    def sanitize_for_github(self, text: str) -> str:
+        patterns = [
+            (r'ghp_[a-zA-Z0-9]{36}', '[REDACTED_GH_TOKEN]'),
+            (r'sk-[a-zA-Z0-9]{20,}', '[REDACTED_API_KEY]'),
+            (r'[a-zA-Z0-9]{32,}', '[REDACTED_KEY]'),
+        ]
+        sanitized = text
+        for pattern, replacement in patterns:
+            sanitized = re.sub(pattern, replacement, sanitized)
+        return sanitized
 
 
 def _is_truthy(value: str | None) -> bool:
@@ -399,6 +431,7 @@ __all__ = [
     "LLMRefineResponse",
     "LLMCoordinatorResponse",
     "LLMOutputError",
+    "LLMOutputValidator",
     "parse_agent_issues",
     "parse_agent_output",
     "generate_analysis",

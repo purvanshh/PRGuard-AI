@@ -107,12 +107,16 @@ def format_pr_review(report: dict) -> str:
             agent_sections[agent_name].extend(output.get("issues", []))
 
     def _render_section(title: str, issues: List[dict]) -> None:
+        from prguard_ai.llm.client import LLMOutputValidator
+        validator = LLMOutputValidator()
+
         lines.append(f"### {title}")
         if not issues:
             lines.append("_No issues detected._")
         else:
             for issue in issues:
                 message = redact_secrets(str(issue.get("message", "")))
+                message = validator.sanitize_for_github(message)
                 lines.append(
                     f"- `{issue.get('severity', '').upper()}` "
                     f"(line {issue.get('line')}): {message}"
