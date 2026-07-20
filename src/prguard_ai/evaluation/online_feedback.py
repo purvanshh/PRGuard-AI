@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import time
 from dataclasses import dataclass
 from typing import Any, Iterable
@@ -74,28 +73,6 @@ class FeedbackCollector:
         return signals
 
 
-def recalibrate_confidence(samples: Iterable[tuple[float, float]]) -> tuple[float, float]:
-    """Fit a tiny logistic calibration curve from (confidence, accepted) samples."""
-    rows = [(max(0.001, min(0.999, c)), 1.0 if y >= 0.5 else 0.0) for c, y in samples]
-    if len(rows) < 2:
-        return 1.0, 0.0
-    slope = 1.0
-    intercept = 0.0
-    learning_rate = 0.2
-    for _ in range(200):
-        grad_slope = 0.0
-        grad_intercept = 0.0
-        for confidence, accepted in rows:
-            logit = math.log(confidence / (1.0 - confidence))
-            pred = 1.0 / (1.0 + math.exp(-(slope * logit + intercept)))
-            error = pred - accepted
-            grad_slope += error * logit
-            grad_intercept += error
-        slope -= learning_rate * grad_slope / len(rows)
-        intercept -= learning_rate * grad_intercept / len(rows)
-    return slope, intercept
-
-
 def assign_variant(subject: str, *, experiment: str, rollout: float = 0.10, control: str = "current", treatment: str = "candidate") -> str:
     """Deterministically route a subject into control/treatment."""
     rollout = max(0.0, min(1.0, rollout))
@@ -119,7 +96,6 @@ __all__ = [
     "assign_variant",
     "finding_key",
     "reaction_to_score",
-    "recalibrate_confidence",
     "serialize_shadow_findings",
     "should_shadow_run",
 ]

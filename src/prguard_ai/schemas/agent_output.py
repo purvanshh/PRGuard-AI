@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -67,4 +67,14 @@ class AgentOutput(BaseModel):
     )
 
 
-__all__ = ["Issue", "AgentOutput"]
+class Stance(BaseModel):
+    agent: str
+    stance: Literal["AGREE", "DISAGREE", "NEUTRAL"]
+    reasoning: str
+
+
+class RefinedIssue(Issue):
+    stance_on_others: List[Stance] = Field(default_factory=list)
+
+
+__all__ = ["Issue", "AgentOutput", "Stance", "RefinedIssue"]

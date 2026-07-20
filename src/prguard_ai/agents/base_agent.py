@@ -181,6 +181,9 @@ class BaseAgent(ABC):
             issues = new_issues
 
         issues = apply_policy_to_issues(issues, self.policy)
+        sandbox_path = self.repo_metadata.get("sandbox_path")
+        if sandbox_path:
+            issues = self.verify_issues(issues, sandbox_path)
         return AgentOutput(
             agent=self.agent_name,
             confidence=self.score_confidence(issues),
@@ -189,6 +192,49 @@ class BaseAgent(ABC):
             reasoning_trace=self.reasoning_trace,
             tool_calls=[record.model_dump() for record in self.tool_records],
         )
+
+    def verify_issues(self, issues: list[Issue], sandbox_path: str | None = None) -> list[Issue]:
+        verified_issues: list[Issue] = []
+        for issue in issues:
+            if issue.confidence_source == "rule_based":
+                issue.verified = True
+                verified_issues.append(issue)
+                continue
+            try:
+                file_path = issue.file_path
+                line_num = issue.line
+                if file_path and sandbox_path:
+                    result = self.executor.execute(
+                        ToolInvocation(
+                            tool="read_file",
+                            args={
+                                "path": f"{sandbox_path}/{file_path}",
+                                "start_line": max(1, line_num - 2),
+                                "end_line": line_num + 2,
+                            },
+                            rationale="verify LLM claim",
+                        )
+                    )
+                    actual_text = str(result.output.get("content", "")) if result.output else ""
+                    if self._claim_matches_actual(issue.message, actual_text):
+                        issue.verified = True
+                    else:
+                        issue.verified = False
+                        if issue.severity == "high":
+                            issue.severity = "medium"
+                        issue.message += " [UNVERIFIED: claimed issue not found at line]"
+                else:
+                    issue.verified = False
+            except Exception:
+                issue.verified = False
+            verified_issues.append(issue)
+        return verified_issues
+
+    def _claim_matches_actual(self, claim: str, actual_line: str) -> bool:
+        terms = re.findall(r"\b\w+\b", claim.lower())
+        actual_lower = actual_line.lower()
+        matches = sum(1 for t in terms if t in actual_lower)
+        return matches >= 2
 
     def _synthesize_with_llm(
         self,

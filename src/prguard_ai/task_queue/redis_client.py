@@ -196,9 +196,34 @@ def get_redis_client() -> RedisClient:
     return RedisClient()
 
 
+def store_agent_output(pr_id: str, agent: str, output_json: str, ex: int = 3600) -> None:
+    client = get_redis()
+    key = f"prguard:agent:{pr_id}:{agent}"
+    client.set(key, output_json, ex=ex)
+
+
+def get_agent_output_json(pr_id: str, agent: str) -> str | None:
+    client = get_redis()
+    key = f"prguard:agent:{pr_id}:{agent}"
+    return client.get(key)
+
+
+def get_all_outputs_json(pr_id: str) -> dict[str, str]:
+    agents = ["style", "logic", "security"]
+    result: dict[str, str] = {}
+    for a in agents:
+        data = get_agent_output_json(pr_id, a)
+        if data:
+            result[a] = data
+    return result
+
+
 __all__ = [
     "get_redis",
     "get_redis_client",
+    "store_agent_output",
+    "get_agent_output_json",
+    "get_all_outputs_json",
     "ping_ok",
     "RedisClient",
     "RedisClientError",
