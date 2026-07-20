@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 from typing import Any, Dict
 
 import logging
@@ -45,6 +46,7 @@ celery_app.conf.task_routes = {
     "task_queue.tasks.prepare_repository": {"queue": "orchestrator"},
     "task_queue.tasks.post_review": {"queue": "orchestrator"},
     "task_queue.tasks.on_task_failure": {"queue": "orchestrator"},
+    "task_queue.celery_app.on_chord_error": {"queue": "orchestrator"},
 }
 celery_app.conf.task_time_limit = 300
 celery_app.conf.task_soft_time_limit = 240
@@ -59,6 +61,31 @@ if _EAGER_MODE:
     celery_app.conf.task_store_eager_result = True
 
 _TRACER = get_tracer("celery")
+
+
+def _enqueue_orchestrator_dlq(payload: dict[str, Any]) -> None:
+    """Best-effort dead-letter enqueue for failed orchestration callbacks."""
+    try:
+        from prguard_ai.task_queue.redis_client import get_redis
+
+        get_redis().lpush("prguard:dlq:orchestrator", json.dumps(payload, default=str))
+    except Exception:
+        logger.exception("Failed to enqueue orchestrator dead-letter payload")
+
+
+@celery_app.task(name="task_queue.celery_app.on_chord_error")
+def on_chord_error(request: Any = None, exc: Any = None, traceback: Any = None, pr_id: str | None = None) -> None:
+    """Record chord failures so failed PR workflows can be replayed or inspected."""
+    logger.critical("Chord failed for PR %s: %s", pr_id or "unknown", exc)
+    _enqueue_orchestrator_dlq(
+        {
+            "task": "chord",
+            "pr_id": pr_id,
+            "error": str(exc),
+            "request": str(request),
+            "traceback": str(traceback),
+        }
+    )
 
 
 @celery_app.task(
@@ -190,6 +217,7 @@ __all__ = [
     "run_logic_agent",
     "run_security_agent",
     "refine_agent",
+    "on_chord_error",
     "review_pr",
 ]
 

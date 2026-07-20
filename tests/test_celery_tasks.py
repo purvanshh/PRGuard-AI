@@ -287,3 +287,14 @@ class TestCeleryReliabilityConfig:
 
         assert celery_app.conf.task_acks_late is True
         assert celery_app.conf.task_reject_on_worker_lost is True
+
+    def test_chord_error_uses_orchestrator_dlq(self, monkeypatch):
+        from prguard_ai.task_queue import celery_app as ca
+
+        payloads = []
+        monkeypatch.setattr(ca, "_enqueue_orchestrator_dlq", lambda payload: payloads.append(payload))
+
+        ca.on_chord_error(exc=RuntimeError("callback failed"), pr_id="owner/repo#9")
+
+        assert payloads[0]["pr_id"] == "owner/repo#9"
+        assert payloads[0]["task"] == "chord"

@@ -10,6 +10,7 @@ from prguard_ai.task_queue.celery_app import (
     run_logic_agent,
     run_security_agent,
     refine_agent,
+    on_chord_error,
 )
 from prguard_ai.analysis.repo_sandbox import cleanup_repository
 from prguard_ai.schemas.agent_output import AgentOutput
@@ -46,7 +47,7 @@ def review_pr(prepared: Dict[str, Any], pr_id: str, repo_metadata: Dict[str, Any
                 initial_group,
                 process_initial_agent_outputs.s(pr_id, diff_text, repo_metadata, sandbox_path, repo, pr_number),
             )
-            result = workflow.apply_async(link_error=on_task_failure.s(pr_id=pr_id))
+            result = workflow.apply_async(link_error=on_chord_error.s(pr_id=pr_id))
             span.add_event("initial_agent_chord_enqueued", {"chord_id": result.id or ""})
             return {"status": "enqueued", "pr_id": pr_id, "workflow_id": result.id}
         except Exception:
@@ -57,13 +58,13 @@ def review_pr(prepared: Dict[str, Any], pr_id: str, repo_metadata: Dict[str, Any
 
 @celery_app.task(
     name="task_queue.orchestrator.process_initial_agent_outputs",
-    autoretry_for=(Exception,),
-    retry_backoff=True,
-    retry_kwargs={"max_retries": 2},
+    bind=True,
+    max_retries=3,
     time_limit=300,
     soft_time_limit=240,
 )
 def process_initial_agent_outputs(
+    self,
     outputs: List[Dict[str, Any]],
     pr_id: str,
     diff_text: str,
@@ -73,24 +74,34 @@ def process_initial_agent_outputs(
     pr_number: int,
 ) -> dict:
     """Store initial agent results and start the first refinement chord."""
-    style_output = AgentOutput.model_validate(outputs[0])
-    logic_output = AgentOutput.model_validate(outputs[1])
-    security_output = AgentOutput.model_validate(outputs[2])
+    try:
+        agent_outputs = {
+            AgentOutput.model_validate(output).agent: AgentOutput.model_validate(output)
+            for output in outputs
+        }
 
-    ctx = ReviewContext(
-        pr_id=pr_id,
-        diff_text=diff_text,
-        repo_metadata=repo_metadata,
-        agent_outputs={
-            "style": style_output,
-            "logic": logic_output,
-            "security": security_output,
-        },
-        round=0,
-        sandbox_path=sandbox_path,
-    )
-    store_review_context(pr_id, ctx)
-    return _dispatch_refinement_round(pr_id, repo, pr_number, round_num=1, consecutive_no_change_rounds=0)
+        ctx = ReviewContext(
+            pr_id=pr_id,
+            diff_text=diff_text,
+            repo_metadata=repo_metadata,
+            agent_outputs=agent_outputs,
+            round=0,
+            sandbox_path=sandbox_path,
+        )
+        store_review_context(pr_id, ctx)
+        return _dispatch_refinement_round(pr_id, repo, pr_number, round_num=1, consecutive_no_change_rounds=0)
+    except Exception as exc:
+        from prguard_ai.task_queue.celery_app import _enqueue_orchestrator_dlq
+
+        logger.exception("process_initial_agent_outputs failed for PR %s", pr_id)
+        _enqueue_orchestrator_dlq(
+            {
+                "task": "process_initial_agent_outputs",
+                "pr_id": pr_id,
+                "error": str(exc),
+            }
+        )
+        raise self.retry(exc=exc, countdown=60)
 
 
 @celery_app.task(
