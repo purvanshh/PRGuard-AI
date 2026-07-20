@@ -73,7 +73,7 @@ class DetectorRegistry:
 
     SECURITY_RULES: list[DetectionRule] = [
         DetectionRule("eval_usage", re.compile(r"\beval\s*\(|\bexec\s*\("), "high", "security", "eval() called on potentially user-controlled input."),
-        DetectionRule("sql_injection", re.compile(r"(?:select|insert|update|delete)\s+.*['\"]\s*[+:]"), "high", "security", "SQL injection via string-concatenated query."),
+        DetectionRule("sql_injection", re.compile(r"(?:select|insert|update|delete)\s+.*['\"]\s*[+:]", re.IGNORECASE), "high", "security", "SQL injection via string-concatenated query."),
         DetectionRule("command_injection", re.compile(r"shell\s*=\s*True"), "high", "security", "Command injection via shell=True with interpolated input."),
         DetectionRule("hardcoded_secret", re.compile(r"(SECRET_KEY|API_KEY|api_key|secret)\s*=\s*[\"'][\w\-]{20,}[\"']"), "high", "security", "Hardcoded secret detected."),
         DetectionRule("pickle_loads", re.compile(r"pickle\.loads?\("), "high", "security", "Unsafe pickle deserialization with untrusted input."),

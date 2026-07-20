@@ -192,8 +192,13 @@ def ping_ok() -> bool:
         return False
 
 
+def get_redis_client() -> RedisClient:
+    return RedisClient()
+
+
 __all__ = [
     "get_redis",
+    "get_redis_client",
     "ping_ok",
     "RedisClient",
     "RedisClientError",
