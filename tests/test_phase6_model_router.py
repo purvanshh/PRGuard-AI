@@ -8,8 +8,8 @@ def test_model_router_loads_config_and_routes_by_complexity():
     simple = router.route("style", "small lint diff")
     complex_route = router.route("security", "diff --git a/x b/x\n" + "auth sql token payment")
 
-    assert simple.model == "gpt-4o-mini"
-    assert complex_route.model == "gpt-4o"
+    assert simple.model == "deepseek-v4-flash"
+    assert complex_route.model == "deepseek-v4-flash"
     assert complex_route.max_tokens == 2048
 
 

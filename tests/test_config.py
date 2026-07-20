@@ -28,7 +28,7 @@ def test_config_endpoint_success():
     data = response.json()
 
     # Assert sensitive keys are masked
-    assert data["openai_api_key"] == "********"
+    assert data["deepseek_api_key"] == "********"
     assert data["github_token"] == "********"
     assert data["github_webhook_secret"] == "********"
     assert data["admin_token"] == "********"

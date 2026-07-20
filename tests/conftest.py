@@ -10,7 +10,7 @@ os.environ["REDIS_FALLBACK_TO_MEMORY"] = "true"
 # Fallback dummy credentials to pass settings validation during test collection
 os.environ.setdefault("GITHUB_TOKEN", "dummy-github-token")
 os.environ.setdefault("GITHUB_WEBHOOK_SECRET", "dummy-webhook-secret")
-os.environ.setdefault("OPENAI_API_KEY", "dummy-openai-key")
+os.environ.setdefault("DEEPSEEK_API_KEY", "dummy-deepseek-key")
 
 
 @pytest.fixture

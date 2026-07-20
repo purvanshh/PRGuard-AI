@@ -34,9 +34,10 @@ def test_structured_output_returns_parsed_model():
         issues=[Issue(line=10, severity="high", message="test", evidence="x", confidence_source="llm_reasoning")]
     )
 
-    with patch.object(client, '_get_client') as mock_get:
-        mock_get.return_value.beta.chat.completions.parse.return_value = mock_response
+    mock_client = MagicMock()
+    mock_client.beta.chat.completions.parse.return_value = mock_response
 
+    with patch.object(client, 'client', mock_client):
         result = client.generate_analysis("test prompt", LLMIssueResponse)
         assert isinstance(result, LLMIssueResponse)
         assert len(result.issues) == 1
@@ -47,14 +48,15 @@ def test_no_regex_fallback_in_happy_path():
 
     client = LLMClient()
 
-    with patch.object(client, '_get_client') as mock_get:
-        mock_response = MagicMock()
-        mock_response.choices[0].message.parsed = LLMIssueResponse(issues=[])
-        mock_get.return_value.beta.chat.completions.parse.return_value = mock_response
+    mock_client = MagicMock()
+    mock_client.beta.chat.completions.parse.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(parsed=LLMIssueResponse(issues=[])))]
+    )
 
+    with patch.object(client, 'client', mock_client):
         result = client.generate_analysis("test", LLMIssueResponse)
 
-        mock_get.return_value.chat.completions.create.assert_not_called()
+        mock_client.chat.completions.create.assert_not_called()
 
 
 def test_malformed_json_fails_gracefully():
@@ -63,9 +65,10 @@ def test_malformed_json_fails_gracefully():
 
     client = LLMClient()
 
-    with patch.object(client, '_get_client') as mock_get:
-        mock_get.return_value.beta.chat.completions.parse.side_effect = Exception("Bad JSON")
-        mock_get.return_value.chat.completions.create.side_effect = Exception("Also bad")
+    mock_client = MagicMock()
+    mock_client.beta.chat.completions.parse.side_effect = Exception("Bad JSON")
+    mock_client.chat.completions.create.side_effect = Exception("Also bad")
 
+    with patch.object(client, 'client', mock_client):
         with pytest.raises(LLMOutputError):
             client.generate_analysis("test", LLMIssueResponse)
