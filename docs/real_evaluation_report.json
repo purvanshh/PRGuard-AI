@@ -11,6 +11,7 @@
   },
   "results": {
     "true_positives": 6,
+    "partial_detections": 1,
     "false_positives": 1,
     "false_negatives": 2,
     "true_negatives": 1,
@@ -21,7 +22,7 @@
   "per_pr": [
     {"pr_id": "115164", "cve": null, "expected": 0, "found": 1, "verdict": "false_positive", "notes": "Rule-based XML detector hit test file"},
     {"pr_id": "142529", "cve": null, "expected": 0, "found": 0, "verdict": "correct", "notes": "Traceback color fix, non-security"},
-    {"pr_id": "139359", "cve": "CVE-2025-59375", "expected": 1, "found": 2, "verdict": "hit", "notes": "Expat XML bomb fix — low-severity findings, missed high-severity core issue"},
+    {"pr_id": "139359", "cve": "CVE-2025-59375", "expected": 1, "found": 2, "verdict": "partial", "notes": "Expat XML bomb fix: LLM found low-severity issues but missed the core memory amplification vulnerability"}
     {"pr_id": "146027", "cve": "CVE-2026-3644", "expected": 1, "found": 0, "verdict": "miss", "notes": "Cookie injection — transient LLM API failure"},
     {"pr_id": "146026", "cve": "CVE-2026-3644", "expected": 1, "found": 0, "verdict": "miss", "notes": "Cookie injection backport — transient LLM API failure"},
     {"pr_id": "150749", "cve": null, "expected": 1, "found": 3, "verdict": "hit", "notes": "HTTP DoS (trailer/interim limits)"},
@@ -32,8 +33,8 @@
   ],
   "gap_analysis": {
     "synthetic_vs_real": {"synthetic_f1": 0.82, "real_f1": 0.80, "gap": 0.02},
-    "key_insight": "Real-world F1 (0.80) ≈ Synthetic F1 (0.82). System generalizes. Gap is 0.02, not 0.47.",
-    "miss_reasons": ["Transient LLM API failures (2 misses)", "C library patterns not covered by Python-specific rules (low-severity only)"],
-    "false_positive_reasons": ["XML rule matched test file — fixed by adding test-file detection"]
+    "key_insight": "Real-world F1 (0.80) ≈ Synthetic F1 (0.82). System generalizes. 5 clean catches, 1 partial (severity underestimated), 2 misses.",
+    "miss_reasons": ["Silent empty LLM responses under rapid-fire evaluation; retry-with-backoff at LLM call level is a known gap (2 misses)", "C library patterns not covered by Python-specific rules (low-severity partial only)"],
+    "false_positive_reasons": ["XML rule matched test file, fixed by adding test-file detection"]
   }
 }
