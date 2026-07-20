@@ -2,27 +2,42 @@
 
 ### Agent System Design
 
-- **Style agent** (`agents/style_agent.py`): rule-based checks (tabs, long lines) plus LLM-guided style issues.
-- **Logic agent** (`agents/logic_agent.py`): AST-based summaries and context snippets fed into an LLM to surface logic bugs.
-- **Security agent** (`agents/security_agent.py`): pattern-based checks (eval/exec, SQL injection, secrets) plus LLM guidance.
+Each agent extends `BaseAgent` (`agents/base_agent.py`) which implements a ReAct loop: observe diff → select tools → execute → synthesise issues → verify findings → refine. The `AgentToolExecutor` (`agents/tools/executor.py`) provides 14 tools, with each agent selecting a subset relevant to its domain.
+
+- **Style agent** (`agents/style_agent.py`): rule-based checks (tabs, long lines) plus LLM-guided style issues. Tools: `run_linter`, `check_formatting`, `get_repo_style_guide`, `read_file`, `search_codebase`.
+- **Logic agent** (`agents/logic_agent.py`): AST-based summaries and context snippets fed into an LLM to surface logic bugs. Tools: `get_type_info`, `run_test`, `symbolic_execute`, `check_dead_code`, `search_codebase`.
+- **Security agent** (`agents/security_agent.py`): pattern-based checks (eval/exec, SQL injection, secrets) plus LLM guidance. Tools: `dependency_scan`, `cve_lookup`, `secret_scan`, `check_auth_patterns`, `git_blame`, `search_codebase`.
 - **Arbitrator** (`agents/arbitrator_agent.py`): aggregates all agent outputs into a single `PullRequestReport` with overall confidence and disagreement notes.
 
 Each agent receives:
 
 - Unified diff text for the PR.
-- `repo_metadata` with `repository`, `pr_number`, `pr_id`.
+- `repo_metadata` with `repository`, `pr_number`, `pr_id`, and optional `sandbox_path`.
 
 All agents return a `schemas.agent_output.AgentOutput` object.
 
-### Code Graph Reasoning
+### Tool System
 
-`analysis/code_graph.py` builds a lightweight import graph over the repository:
+The `AgentToolExecutor` (`agents/tools/executor.py`) exposes 14 local analysis tools:
 
-- Scans Python files up to a fixed limit.
-- Extracts `import` / `from` statements into an adjacency map.
-- Caches results per repository path.
+| Tool | Agent | Purpose |
+|------|-------|---------|
+| `read_file` | All | Read a file range from the sandbox |
+| `search_codebase` | All | Grep the repo for a pattern |
+| `run_linter` | Style | `compileall` syntax check |
+| `check_formatting` | Style | `ruff format --check --diff` |
+| `get_repo_style_guide` | Style | Read `.editorconfig`, `ruff.toml`, `pyproject.toml` style config |
+| `run_test` | Logic | `pytest` on a target |
+| `get_type_info` | Logic | AST-based function signature extraction |
+| `symbolic_execute` | Logic | Branch-path enumeration through a function |
+| `check_dead_code` | Logic | Detect unreachable statements after return/raise |
+| `dependency_scan` | Security | Parse dependency manifests for suspicious tokens (`*`, `http://`, `git+http`) |
+| `cve_lookup` | Security | Shell out to `pip-audit` for known CVEs |
+| `secret_scan` | Security | Regex-based hardcoded secret detection (API keys, tokens, private keys) |
+| `check_auth_patterns` | Security | Detect weak auth patterns (bypassed auth, IP-based auth, etc.) |
+| `git_blame` | Security | `git blame` for author attribution on suspicious lines |
 
-Agents can use this graph to understand module relationships, e.g. to prioritize issues in central modules.
+Each agent's `analyze_tool_needs()` examines the diff and returns only the relevant tools (capped at 3 per ReAct iteration to bound execution time). The `detect_suspicious_findings()` method acts as a second-line trigger, requesting additional tools when LLM findings warrant verification.
 
 ### Repository RAG Retrieval
 

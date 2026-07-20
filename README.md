@@ -171,7 +171,7 @@ PRGuard AI has been built across fifteen production-oriented phases:
 |-------|---------|-------------|
 | 1 | Foundation Repair | Docker Compose with healthchecks, sandbox deletion bug fix, TOCTOU race via Redis `setnx`, `task_acks_late`, dead-letter queue, idempotent `post_review` via comment marker digest |
 | 2 | Evaluation Infrastructure | Semantic issue matching (token overlap + line proximity), confidence intervals, per-agent metrics, 500+ curated dataset fixtures |
-| 3 | Real Agents with Tools | `BaseAgent` ABC with ReAct loop, 7 tools (read_file, search_codebase, run_linter, run_test, get_type_info, git_blame, dependency_scan), `llm_skipped` flag |
+| 3 | Real Agents with Tools | `BaseAgent` ABC with ReAct loop, 14 tools including per-agent specialisations (read_file, search_codebase, run_linter, run_test, get_type_info, git_blame, dependency_scan, check_formatting, get_repo_style_guide, symbolic_execute, check_dead_code, cve_lookup, secret_scan, check_auth_patterns), `llm_skipped` flag |
 | 4 | Real Coordinator | `CoordinatorAgent.moderate_round()` with LLM-powered critique generation, `_fallback_guidance()`, steering questions in `ReviewContext` |
 | 5 | Real Arbitrator | Semantic deduplication, conflict resolution via `resolve_conflict()`, coherent unified review, Platt scaling calibration |
 | 6 | Model Routing & Cost Optimization | `ModelRouter` with per-agent model config, `SemanticCache` (Jaccard similarity), fallback chain, per-model token budgeting |
@@ -184,6 +184,8 @@ PRGuard AI has been built across fifteen production-oriented phases:
 | 13 | Prompt Management | Versioned prompts, env-based feature flags, canary rollout helpers, model-run registry |
 | 14 | Production Deployability | Helm chart, Kubernetes probes, ConfigMap/Secret wiring, resource requests/limits, Terraform AWS starter module |
 | 15 | Final Polish | Evaluation report v2, demo checklist, submission notes, and architecture decision records |
+| 16 | Per-Agent Tool Specialization | Each agent gets a unique tool set: Style → `check_formatting` + `get_repo_style_guide`; Logic → `symbolic_execute` + `check_dead_code`; Security → `cve_lookup` + `secret_scan` + `check_auth_patterns`. `analyze_tool_needs()` reasons dynamically about which tools to invoke. |
+| 17 | Honest Documentation | README updated with known limitations, real-world performance characteristics, and accurate test/tool counts. Stale ADRs refreshed. |
 
 ---
 
@@ -257,7 +259,7 @@ The server runs on `http://localhost:8000`.
 pytest
 ```
 
-The test suite enforces a minimum coverage threshold of 70%. 237 tests cover diff parsing, agent analysis, confidence scoring, evaluation infrastructure, model routing, scalability controls, distributed tracing, security hardening, human-in-the-loop review, circuit breaker behaviour, token budgeting, health checks, sanitization, repository caching, task registry, Celery task execution, Pydantic schemas, structured logging, and the end-to-end pipeline. Current coverage is 81%.
+The test suite enforces a minimum coverage threshold of 70%. 251 tests cover diff parsing, agent analysis, confidence scoring, evaluation infrastructure, model routing, scalability controls, distributed tracing, security hardening, human-in-the-loop review, circuit breaker behaviour, token budgeting, health checks, sanitization, repository caching, task registry, Celery task execution, Pydantic schemas, structured logging, tool executor (including all 14 per-agent tools), policy engine, feedback loop, prompt management, and the end-to-end pipeline. Current coverage is 79%.
 
 ---
 
@@ -370,7 +372,7 @@ prguard-ai/
 ├── fixtures/                # Test fixtures and sample diff data
 ├── prompts/                 # Agent prompt templates
 ├── scripts/                 # Utility and maintenance scripts
-├── tests/                   # Unit and integration test suite (237 tests, 81% coverage)
+├── tests/                   # Unit and integration test suite (251 tests, 79% coverage)
 ├── .github/workflows/       # GitHub Actions CI pipeline
 ├── Dockerfile               # Python 3.11-slim container image
 ├── docker-compose.yml       # Multi-service orchestration (API, worker, Redis, PostgreSQL)
@@ -437,6 +439,22 @@ print(result)  # {"precision": 0.8, "recall": 1.0, "f1": 0.89, ...}
 # Full dataset suite
 results = run_evaluation_suite(Path("src/prguard_ai/evaluation/dataset/"))
 ```
+
+---
+
+## Known Limitations
+
+PRGuard AI is a research-grade system with the following known gaps:
+
+- **Rule-based detectors are shallow**: Pattern-matched detections (`detect_off_by_one`, `detect_none_dereference`, etc.) use simple regex heuristics that produce false positives on complex code. They are a complement to the LLM, not a replacement for static analysis tools like Semgrep or CodeQL.
+- **LLM cost and latency**: Each PR review triggers 12+ LLM calls (3 agents × 3 refinement rounds + coordinator + arbitrator + refinement messages). At GPT-4o pricing, a moderate PR costs ~$0.15–$0.40. The circuit breaker and token budget mitigate runaway costs but can silently skip analysis.
+- **Multi-language support is uneven**: AST parsing and rule detectors are Python-heavy. Go, TypeScript, Rust, and other languages rely almost entirely on the LLM pass without strong static checks.
+- **No incremental analysis**: Every PR is fully re-analysed; there is no diff-aware caching of file-level analysis results across sequential PRs.
+- **Chunked PR analysis is not yet implemented**: For PRs exceeding 50 files or 5000 lines, the system truncates rather than chunking and merging.
+- **CVE lookup is a stub**: `cve_lookup` shells out to `pip-audit` when `requirements.txt` is present; it does not query the GitHub Advisory Database or NVD directly.
+- **Secret scanning is regex-only**: `secret_scan` uses hand-written regex patterns with no entropy analysis or pre-commit hook integration. It will miss obfuscated or structured secrets like JWT tokens with low entropy.
+- **Symbolic execution is path-counting, not constraint solving**: `symbolic_execute` enumerates AST branches but does not solve path constraints; it cannot prove reachability or detect contradictions.
+- **Confidence calibration is experimental**: The Platt scaling model is trained on a small (500-fixture) dataset and has not been validated on production traffic. Confidence scores should be treated as ordinal signals, not probabilistic guarantees.
 
 ---
 
