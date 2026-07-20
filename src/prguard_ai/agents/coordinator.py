@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from pydantic import TypeAdapter, validate_call
 
@@ -24,6 +24,30 @@ def _get_coordinator_adapter() -> TypeAdapter[dict[str, list[str]]]:
 
 class CoordinatorAgent:
     """Agent that moderates the multi-agent debate and checks stopping conditions."""
+
+    @staticmethod
+    def convergence_state(context: ReviewContext) -> Dict[str, Any]:
+        """Return deterministic debate state used for stopping and observability."""
+        outputs = context.agent_outputs
+        active_agents = sorted(outputs)
+        high_agents = sorted(
+            name
+            for name, output in outputs.items()
+            if any(issue.severity.lower() == "high" for issue in output.issues)
+        )
+        unresolved_high_disagreement = bool(high_agents) and len(high_agents) < len(active_agents)
+        latest_guidance = [item for item in context.coordinator_guidance[-3:] if item.strip()]
+        silent_latest_round = False
+        if active_agents and len(context.dialogue) >= len(active_agents):
+            last_turns = context.dialogue[-len(active_agents):]
+            silent_latest_round = all(not turn.message.strip() for turn in last_turns)
+        return {
+            "active_agents": active_agents,
+            "high_severity_agents": high_agents,
+            "unresolved_high_disagreement": unresolved_high_disagreement,
+            "pending_guidance_count": len(latest_guidance),
+            "silent_latest_round": silent_latest_round,
+        }
 
     @staticmethod
     def _fallback_guidance(context: ReviewContext) -> Dict[str, List[str]]:
@@ -108,17 +132,19 @@ class CoordinatorAgent:
             logger.info("Coordinator: No changes to findings for 2 consecutive rounds. Converged. Stopping.")
             return True
 
+        state = CoordinatorAgent.convergence_state(context)
+        if state["unresolved_high_disagreement"] and context.round < max_rounds:
+            logger.info("Coordinator: High-severity disagreement remains unresolved. Continuing debate.")
+            return False
+
         unresolved = [g for g in context.coordinator_guidance[-3:] if g.strip()]
         if consecutive_no_change_rounds >= 1 and not unresolved:
             logger.info("Coordinator: No unresolved steering guidance remains. Stopping.")
             return True
 
         # If we have dialogue history, check the latest round of turns (one per active agent)
-        num_agents = len(context.agent_outputs)
-        if num_agents > 0 and len(context.dialogue) >= num_agents:
-            last_turns = context.dialogue[-num_agents:]
-            if all(not turn.message.strip() for turn in last_turns):
-                logger.info("Coordinator: All agents are silent in the latest round. Converged. Stopping.")
-                return True
+        if state["silent_latest_round"]:
+            logger.info("Coordinator: All agents are silent in the latest round. Converged. Stopping.")
+            return True
 
         return False
