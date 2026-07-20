@@ -132,13 +132,18 @@ def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullR
     Aggregate agent outputs from context into a single pull request report.
     """
     outputs = list(context.agent_outputs.values())
+    failed_outputs = [o for o in outputs if getattr(o, "error", None)]
     if partial:
-        successful_outputs = [o for o in outputs if not getattr(o, "error", None)]
+        successful_outputs = [o for o in outputs if o not in failed_outputs]
     else:
         successful_outputs = outputs
-        for o in outputs:
-            if getattr(o, "error", None):
-                raise ValueError(f"Agent {o.agent} failed: {o.error}")
+        for output in failed_outputs:
+            raise ValueError(f"Agent {output.agent} failed: {output.error}")
+
+    failure_notes = [
+        f"{output.agent} agent failed and was excluded from partial arbitration: {output.error}"
+        for output in failed_outputs
+    ]
 
     if not successful_outputs:
         report = PullRequestReport(
@@ -146,8 +151,8 @@ def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullR
             aggregate_tier=aggregate_confidence_tier([]),
             agent_outputs=outputs,
             issues=[],
+            disagreements=failure_notes,
         )
-        setattr(report, "disagreements", [])
         return report
 
     overall_confidence = aggregate_confidence_with_weights(successful_outputs)
@@ -162,9 +167,8 @@ def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullR
         tier_breakdown=confidence_breakdown(raw_issues),
         agent_outputs=outputs,
         issues=issues,
+        disagreements=failure_notes + disagreements,
     )
-    # Attach disagreements into the model via a dynamic attribute for downstream use.
-    setattr(report, "disagreements", disagreements)
     return report
 
 

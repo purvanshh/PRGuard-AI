@@ -1,8 +1,10 @@
 from prguard_ai.agents.arbitrator_agent import (
+    arbitrate_confidence,
     deduplicate_issues,
     resolve_conflicts,
 )
 from prguard_ai.schemas.agent_output import AgentOutput, Issue
+from prguard_ai.schemas.context import ReviewContext
 from prguard_ai.schemas.pr_report import PullRequestReport
 
 
@@ -55,3 +57,37 @@ def test_report_markdown_is_single_narrative_findings_section():
     assert "### Style" not in markdown
     assert "**Confidence:**" in markdown
     assert "Confidence basis" in markdown
+
+
+def test_partial_arbitration_reports_failed_agents():
+    context = ReviewContext(
+        pr_id="owner/repo#1",
+        diff_text="diff",
+        agent_outputs={
+            "security": AgentOutput(agent="security", confidence=0.8, issues=[issue(7, "high", "Unsafe eval")]),
+            "logic": AgentOutput(agent="logic", confidence=0.0, issues=[], error="timeout"),
+        },
+    )
+
+    report = arbitrate_confidence(context, partial=True)
+
+    assert report.issues
+    assert report.disagreements
+    assert "logic agent failed" in report.disagreements[0]
+
+
+def test_partial_arbitration_reports_all_failed_agents():
+    context = ReviewContext(
+        pr_id="owner/repo#1",
+        diff_text="diff",
+        agent_outputs={
+            "security": AgentOutput(agent="security", confidence=0.0, issues=[], error="timeout"),
+            "logic": AgentOutput(agent="logic", confidence=0.0, issues=[], error="rate limited"),
+        },
+    )
+
+    report = arbitrate_confidence(context, partial=True)
+
+    assert report.issues == []
+    assert len(report.disagreements) == 2
+    assert report.overall_confidence == 0.0
