@@ -17,9 +17,9 @@ from prguard_ai.config.settings import settings
 
 
 DEFAULT_MODEL_CONFIG = {
-    "style": {"simple": "gpt-4o-mini", "complex": "gpt-4o", "max_tokens": 768},
-    "logic": {"simple": "gpt-4o-mini", "complex": "gpt-4o", "max_tokens": 1536},
-    "security": {"simple": "gpt-4o", "complex": "gpt-4o", "max_tokens": 2048},
+    "style": {"simple": "deepseek-v4-flash", "complex": "deepseek-v4-flash", "max_tokens": 768},
+    "logic": {"simple": "deepseek-v4-flash", "complex": "deepseek-v4-flash", "max_tokens": 1536},
+    "security": {"simple": "deepseek-v4-flash", "complex": "deepseek-v4-flash", "max_tokens": 2048},
 }
 
 
@@ -235,7 +235,7 @@ class ModelRouter:
         normalized_agent = agent.lower()
         agent_config = self.config.get(normalized_agent, self.config["logic"])
         complexity = self.assess_complexity(prompt)
-        model = agent_config.get(complexity, agent_config.get("simple", "gpt-4o-mini"))
+        model = agent_config.get(complexity, agent_config.get("simple", "deepseek-v4-flash"))
         max_tokens = int(agent_config.get("max_tokens", 1024))
         return RouteDecision(normalized_agent, complexity, str(model), max_tokens)
 

@@ -1,13 +1,13 @@
 style:
-  simple: gpt-4o-mini
-  complex: gpt-4o-mini
+  simple: deepseek-v4-flash
+  complex: deepseek-v4-flash
   max_tokens: 768
 logic:
-  simple: gpt-4o-mini
-  complex: gpt-4o
+  simple: deepseek-v4-flash
+  complex: deepseek-v4-flash
   max_tokens: 1536
 security:
-  simple: gpt-4o
-  complex: gpt-4o
+  simple: deepseek-v4-flash
+  complex: deepseek-v4-flash
   max_tokens: 2048
-fallback_chain: [gpt-4o-mini, gpt-4o, claude-3-5-sonnet, local/offline]
+fallback_chain: [deepseek-v4-flash, local/offline]

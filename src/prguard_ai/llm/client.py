@@ -41,7 +41,7 @@ class LLMOutputError(Exception):
 
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 2
-DEFAULT_MODEL = "openai/gpt-oss-120b"
+DEFAULT_MODEL = settings.llm_model
 
 MAX_TOKENS_PER_REQUEST = settings.max_tokens_per_request
 MAX_TOKENS_PER_PR = settings.max_tokens_per_pr
@@ -68,18 +68,61 @@ class LLMCoordinatorResponse(BaseModel):
 class LLMClient:
     def __init__(
         self,
-        model: str | None = None,
-        max_tokens: int = 512,
-        temperature: float = 0.1,
         token_budget: TokenBudget | None = None,
+        max_tokens: int = 2048,
+        temperature: float = 0.1,
     ):
-        self.default_model = model or DEFAULT_MODEL
+        self.provider = settings.llm_provider
+        self.model = settings.llm_model
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.token_budget = token_budget
+        self.call_count = 0
 
-    def _get_client(self) -> openai.OpenAI:
-        return _get_client()
+        if self.provider == "deepseek":
+            self.client = openai.OpenAI(
+                api_key=settings.deepseek_api_key,
+                base_url=settings.llm_base_url,
+            )
+        elif self.provider == "openai":
+            self.client = openai.OpenAI(api_key=settings.openai_api_key)
+            self.model = settings.llm_model
+        else:
+            raise ValueError(f"Unknown LLM provider: {self.provider}")
+
+    def _get_model(self) -> str:
+        return self.model
+
+    def generate(
+        self,
+        prompt: str,
+        max_tokens: int | None = None,
+        **kwargs,
+    ) -> str:
+        if self.token_budget and not self.token_budget.check_and_consume(max_tokens or self.max_tokens):
+            raise TokenBudgetExceededError("Budget exhausted")
+
+        try:
+            response = self.client.chat.completions.create(
+                model=self._get_model(),
+                messages=[
+                    {"role": "system", "content": "You are a code review agent."},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=max_tokens or self.max_tokens,
+                temperature=self.temperature,
+                **kwargs,
+            )
+            self.call_count += 1
+            return response.choices[0].message.content or ""
+        except openai.RateLimitError:
+            logger.warning("DeepSeek rate limit hit")
+            raise
+        except openai.OpenAIError as e:
+            logger.error(f"LLM API error: {type(e).__name__}: {e}")
+            logger.error(f"  Provider: {self.provider}")
+            logger.error(f"  Model: {self._get_model()}")
+            raise
 
     def generate_analysis(
         self,
@@ -87,11 +130,9 @@ class LLMClient:
         response_schema: type[BaseModel] = LLMIssueResponse,
         model: str | None = None,
     ) -> BaseModel:
-        client = self._get_client()
-        model = model or self.default_model
-
+        model = model or self.model
         try:
-            response = client.beta.chat.completions.parse(
+            response = self.client.beta.chat.completions.parse(
                 model=model,
                 messages=[
                     {"role": "system", "content": "You are a code review agent."},
@@ -101,6 +142,7 @@ class LLMClient:
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
             )
+            self.call_count += 1
             return response.choices[0].message.parsed
         except Exception as e:
             logger.error(f"Structured output failed: {e}")
@@ -116,13 +158,12 @@ class LLMClient:
         prompt: str,
         response_schema: type[BaseModel],
     ) -> BaseModel:
-        client = self._get_client()
         schema_json = response_schema.model_json_schema()
         augmented_prompt = (
             f"{prompt}\n\nRespond with JSON matching this schema:\n{schema_json}"
         )
-        response = client.chat.completions.create(
-            model=self.default_model,
+        response = self.client.chat.completions.create(
+            model=self.model,
             messages=[{"role": "user", "content": augmented_prompt}],
             response_format={"type": "json_object"},
             temperature=self.temperature,
@@ -201,41 +242,36 @@ def parse_agent_output(raw: str) -> AgentOutput:
     return AgentOutput.model_validate(data)
 
 
-def calculate_openai_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
-    prompt_rate = 5.0 / 1_000_000
-    completion_rate = 15.0 / 1_000_000
+def calculate_llm_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
+    prompt_rate = 0.5 / 1_000_000
+    completion_rate = 2.0 / 1_000_000
 
     m = model.lower()
-    if "gpt-4o" in m:
-        prompt_rate = 5.0 / 1_000_000
-        completion_rate = 15.0 / 1_000_000
-    elif "gpt-4" in m:
-        prompt_rate = 10.0 / 1_000_000
-        completion_rate = 30.0 / 1_000_000
-    elif "gpt-3.5" in m:
+    if "deepseek" in m:
         prompt_rate = 0.5 / 1_000_000
-        completion_rate = 1.5 / 1_000_000
-    elif "gpt-oss-120b" in m:
-        prompt_rate = 1.2 / 1_000_000
-        completion_rate = 1.2 / 1_000_000
+        completion_rate = 2.0 / 1_000_000
 
     cost = prompt_tokens * prompt_rate + completion_tokens * completion_rate
     return float(round(cost, 6))
 
 
 def _get_client() -> openai.OpenAI:
-    nvidia_key = settings.nvidia_api_key
-    if nvidia_key:
+    provider = settings.llm_provider
+    if provider == "deepseek":
+        api_key = settings.deepseek_api_key
+        if not api_key:
+            raise RuntimeError("DEEPSEEK_API_KEY is not configured.")
         return openai.OpenAI(
-            base_url="https://integrate.api.nvidia.com/v1",
-            api_key=nvidia_key,
+            base_url=settings.llm_base_url,
+            api_key=api_key,
         )
-    openai_key = settings.openai_api_key
-    if not openai_key:
-        raise RuntimeError("NVIDIA_API_KEY or OPENAI_API_KEY is not configured.")
-    return openai.OpenAI(
-        api_key=openai_key,
-    )
+    elif provider == "openai":
+        api_key = settings.openai_api_key
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is not configured.")
+        return openai.OpenAI(api_key=api_key)
+    else:
+        raise RuntimeError(f"Unknown LLM provider: {provider}")
 
 
 def _check_and_update_budget(pr_id: str | None, requested_tokens: int) -> None:
@@ -289,7 +325,8 @@ def generate_analysis(
     expect_json: bool = True,
 ) -> Tuple[str, Dict[str, Any]]:
     offline_mode = settings.prguard_offline_mode
-    nvidia_key = settings.nvidia_api_key or settings.openai_api_key
+    provider = settings.llm_provider
+    api_key = settings.deepseek_api_key if provider == "deepseek" else settings.openai_api_key
     route = model_router.route(agent, prompt)
     if model == DEFAULT_MODEL:
         model = route.model
@@ -300,11 +337,11 @@ def generate_analysis(
         if cached is not None:
             return cached
 
-    if offline_mode or not nvidia_key or "PYTEST_CURRENT_TEST" in os.environ:
+    if offline_mode or not api_key or "PYTEST_CURRENT_TEST" in os.environ:
         if offline_mode:
             logger.info("Offline mode enabled; returning stub response from generate_analysis.")
-        elif not nvidia_key:
-            logger.warning("NVIDIA_API_KEY not set; returning offline stub response from generate_analysis.")
+        elif not api_key:
+            logger.warning(f"API key not set for provider {provider}; returning offline stub response.")
         else:
             logger.info("Detected pytest run; skipping external API call and returning stub response.")
         meta: Dict[str, Any] = {
@@ -319,10 +356,6 @@ def generate_analysis(
         }
         semantic_cache.set(f"{agent}:{prompt}", "[]", meta)
         return "[]", meta
-
-    if not settings.nvidia_api_key and settings.openai_api_key:
-        if model == DEFAULT_MODEL:
-            model = "gpt-4o"
 
     _get_client()
 
@@ -381,7 +414,7 @@ def generate_analysis(
                 span.set_attribute("llm.completion_tokens", completion_tokens)
                 span.set_attribute("llm.total_tokens", total_tokens)
 
-                estimated_cost = calculate_openai_cost(model, prompt_tokens, completion_tokens)
+                estimated_cost = calculate_llm_cost(model, prompt_tokens, completion_tokens)
                 if pr_id:
                     from prguard_ai.db import run_async
                     try:
@@ -412,14 +445,14 @@ def generate_analysis(
             except openai.OpenAIError as exc:
                 last_error = exc
                 span.record_exception(exc)
-                logger.error("OpenAI API error: %s", exc)
+                logger.error("LLM API error: %s", exc)
                 if attempt == MAX_RETRIES:
                     raise
                 time.sleep(RETRY_BACKOFF_SECONDS * attempt)
             except Exception as exc:
                 last_error = exc
                 span.record_exception(exc)
-                logger.exception("Unexpected error calling OpenAI.")
+                logger.exception("Unexpected error calling LLM API.")
                 if attempt == MAX_RETRIES:
                     raise
                 time.sleep(RETRY_BACKOFF_SECONDS * attempt)
@@ -457,12 +490,13 @@ def check_llm_health() -> str:
         return _last_llm_health_status
 
     offline_mode = settings.prguard_offline_mode
-    nvidia_key = settings.nvidia_api_key or settings.openai_api_key
+    provider = settings.llm_provider
+    api_key = settings.deepseek_api_key if provider == "deepseek" else settings.openai_api_key
     if offline_mode:
         _last_llm_health_status = "offline"
         _last_llm_health_check = now
         return _last_llm_health_status
-    if not nvidia_key:
+    if not api_key:
         _last_llm_health_status = "missing_api_key"
         _last_llm_health_check = now
         return _last_llm_health_status
@@ -470,7 +504,7 @@ def check_llm_health() -> str:
     try:
         client = _get_client()
         client.chat.completions.create(
-            model="gpt-4o" if not settings.nvidia_api_key else "openai/gpt-oss-120b",
+            model=DEFAULT_MODEL,
             messages=[{"role": "user", "content": "ping"}],
             max_tokens=5,
         )

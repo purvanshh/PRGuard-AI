@@ -17,7 +17,7 @@ Set required environment variables in `.env`:
 
 | Variable | Required | Description |
 |---|---|---|
-| `OPENAI_API_KEY` | Yes | OpenAI API key for LLM analysis |
+| `DEEPSEEK_API_KEY` | Yes | DeepSeek API key for LLM analysis |
 | `DATABASE_URL` | Yes | PostgreSQL connection string (e.g. `postgresql+asyncpg://user:pass@localhost:5432/prguard`) |
 | `REDIS_URL` | Yes | Redis URL for Celery broker (e.g. `redis://localhost:6379/0`) |
 | `GITHUB_TOKEN` | No | GitHub token for private repos (rate-limit boost) |

@@ -11,6 +11,10 @@ from pydantic import Field, model_validator
 class Settings(BaseSettings):
     """Environment-driven configuration settings."""
 
+    deepseek_api_key: str = Field("", validation_alias="DEEPSEEK_API_KEY")
+    llm_provider: str = Field("deepseek", validation_alias="LLM_PROVIDER")
+    llm_base_url: str = Field("https://api.deepseek.com/v1", validation_alias="LLM_BASE_URL")
+    llm_model: str = Field("deepseek-chat", validation_alias="LLM_MODEL")
     openai_api_key: str = Field("", validation_alias="OPENAI_API_KEY")
     nvidia_api_key: str = Field("", validation_alias="NVIDIA_API_KEY")
     github_token: str = Field("", validation_alias="GITHUB_TOKEN")
@@ -58,8 +62,8 @@ class Settings(BaseSettings):
                 raise ValueError("GITHUB_TOKEN must not be empty")
             if not self.github_webhook_secret:
                 raise ValueError("GITHUB_WEBHOOK_SECRET must not be empty")
-            if not self.openai_api_key and not self.nvidia_api_key:
-                raise ValueError("Either OPENAI_API_KEY or NVIDIA_API_KEY must be provided")
+            if not self.deepseek_api_key:
+                raise ValueError("DEEPSEEK_API_KEY must be provided")
         return self
 
 

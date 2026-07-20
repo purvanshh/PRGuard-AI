@@ -4,8 +4,7 @@ services:
     container_name: prguard-api
     init: true
     environment:
-      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
       - REDIS_URL=${REDIS_URL:-redis://redis-data:6379/0}
@@ -33,8 +32,7 @@ services:
     init: true
     command: celery -A prguard_ai.task_queue.celery_app worker --loglevel=INFO --concurrency=3 --uid=nobody -Q style,logic,security,arbitrator,celery
     environment:
-      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - GITHUB_TOKEN=${GITHUB_TOKEN}
       - GITHUB_WEBHOOK_SECRET=${GITHUB_WEBHOOK_SECRET}
       - REDIS_URL=${REDIS_URL:-redis://redis-data:6379/0}

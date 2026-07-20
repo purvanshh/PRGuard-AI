@@ -42,7 +42,7 @@ config:
   LOG_LEVEL: "INFO"
 
 secret:
-  OPENAI_API_KEY: ""
+  DEEPSEEK_API_KEY: ""
   GITHUB_TOKEN: ""
   GITHUB_WEBHOOK_SECRET: ""
   DATABASE_URL: ""

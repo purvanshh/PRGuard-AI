@@ -179,9 +179,9 @@ async def check_database() -> str:
         return "disconnected"
 
 
-def check_openai() -> str:
-    """Return 'configured' if OpenAI API key is set, otherwise 'missing'."""
-    return "configured" if bool(settings.openai_api_key) else "missing"
+def check_llm() -> str:
+    """Return 'configured' if DeepSeek API key is set, otherwise 'missing'."""
+    return "configured" if bool(settings.deepseek_api_key) else "missing"
 
 
 def check_queue_depth() -> Dict[str, int]:
