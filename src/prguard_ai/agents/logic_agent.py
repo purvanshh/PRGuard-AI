@@ -17,21 +17,6 @@ from prguard_ai.agents.tools.tool_args import (
     SearchCodebaseArgs,
     CheckDeadCodeArgs,
 )
-from prguard_ai.agents.detectors import (
-    detect_bare_except,
-    detect_division_by_zero,
-    detect_eq_none,
-    detect_forgotten_await,
-    detect_infinite_loop,
-    detect_mutable_default,
-    detect_none_dereference,
-    detect_dead_code_after_return,
-    detect_off_by_one,
-    detect_todo,
-    detect_toctou,
-    detect_unhandled_async,
-    detect_variable_shadowing,
-)
 from prguard_ai.analysis.ast_parser import AstSummary, detect_language, summarize_source
 from prguard_ai.analysis.diff_parser import DiffHunk, extract_context_lines, parse_diff
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
@@ -207,41 +192,13 @@ class LogicAgent(BaseAgent):
 
         issues: List[Issue] = []
         for h in file_hunks:
-            for i, line in enumerate(h.lines):
-                if line.line_type != "add":
-                    continue
-                text = line.content
-                lineno = line.new_lineno or 1
+            diff_lines: list[tuple[int, str]] = []
+            for line_obj in h.lines:
+                if line_obj.line_type == "add" and line_obj.content.strip():
+                    diff_lines.append(((line_obj.new_lineno or 1), line_obj.content))
 
-                for detector in [
-                    detect_todo, detect_bare_except, detect_off_by_one,
-                    detect_none_dereference, detect_unhandled_async,
-                    detect_toctou, detect_infinite_loop, detect_mutable_default,
-                    detect_variable_shadowing, detect_eq_none, detect_forgotten_await,
-                    detect_division_by_zero, detect_dead_code_after_return,
-                ]:
-                    result = detector(text, lineno, file_path=h.file_path)
-                    if result is not None:
-                        issues.append(result)
-
-                # Also scan adjacent context lines for function-signature-level issues
-                for offset, delta in [(-1, -1), (1, 1)]:
-                    adj = i + offset
-                    if 0 <= adj < len(h.lines):
-                        adj_line = h.lines[adj]
-                        if adj_line.line_type not in ("add",):
-                            adj_text = adj_line.content
-                            adj_lineno = (line.new_lineno or 1) + delta
-                            for detector in [
-                                detect_mutable_default, detect_variable_shadowing,
-                                detect_eq_none, detect_infinite_loop,
-                                detect_unhandled_async, detect_todo,
-                                detect_bare_except, detect_toctou,
-                                detect_dead_code_after_return,
-                            ]:
-                                result = detector(adj_text, adj_lineno, file_path=h.file_path)
-                                if result is not None:
-                                    issues.append(result)
+            from prguard_ai.analysis.detectors import DetectorRegistry
+            issues.extend(DetectorRegistry.match_all("logic", diff_lines, h.file_path))
 
         llm_issues: List[Issue] = []
         if diff_text:

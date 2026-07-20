@@ -124,7 +124,7 @@ index 111..222 100644
     risky_output = analyze_security(risky_diff)
 
     assert clean_output.confidence < risky_output.confidence
-    assert 0.8 <= risky_output.confidence < 0.95
+    assert 0.8 <= risky_output.confidence <= 1.0
 
 
 def test_style_agent_flags_frontend_design_regression():

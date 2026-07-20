@@ -17,18 +17,6 @@ from prguard_ai.agents.tools.tool_args import (
     ReadFileArgs,
     SearchCodebaseArgs,
 )
-from prguard_ai.agents.detectors import (
-    detect_camelcase_function,
-    detect_long_line,
-    detect_missing_function_docstring,
-    detect_missing_module_docstring,
-    detect_multi_import,
-    detect_tab_indentation,
-    detect_todo,
-    detect_trailing_whitespace,
-    detect_unused_import,
-    detect_unused_variable,
-)
 from prguard_ai.analysis.diff_parser import DiffHunk, extract_changed_files, parse_diff
 from prguard_ai.analysis.repo_indexer import retrieve_similar_code
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
@@ -298,60 +286,14 @@ class StyleAgent(BaseAgent):
             relevant_hunks.extend(parsed.get(file_path, []))
 
         issues: List[Issue] = []
-        added_lines_text: List[str] = []
         for hunk in relevant_hunks:
-            all_text = " ".join(l.content for l in hunk.lines)
-            hunk_added_lines = []
-            for i, line_obj in enumerate(hunk.lines):
-                if line_obj.line_type != "add" or line_obj.content.strip() == "":
-                    continue
-                text = line_obj.content
-                lineno = line_obj.new_lineno or 1
-                hunk_added_lines.append(lineno)
-                added_lines_text.append(text)
+            diff_lines: list[tuple[int, str]] = []
+            for line_obj in hunk.lines:
+                if line_obj.line_type == "add" and line_obj.content.strip():
+                    diff_lines.append(((line_obj.new_lineno or 1), line_obj.content))
 
-                # Rule-based detection cascade (on the added line itself)
-                for detector in [
-                    detect_todo, detect_long_line, detect_trailing_whitespace,
-                    detect_camelcase_function, detect_multi_import, detect_tab_indentation,
-                ]:
-                    result = detector(text, lineno, file_path=hunk.file_path)
-                    if result is not None:
-                        issues.append(result)
-
-                # Detectors that need full diff context
-                for detector in [detect_unused_variable, detect_unused_import]:
-                    result = detector(text, lineno, all_text=all_text, file_path=hunk.file_path)
-                    if result is not None:
-                        issues.append(result)
-
-                # Also scan adjacent context lines for function-signature-level issues
-                for offset, context_lineno_delta in [(-1, -1), (1, 1)]:
-                    adj = i + offset
-                    if 0 <= adj < len(hunk.lines):
-                        adj_line = hunk.lines[adj]
-                        if adj_line.line_type not in ("add",):
-                            adj_text = adj_line.content
-                            adj_lineno = (line_obj.new_lineno or 1) + context_lineno_delta
-                            for detector in [
-                                detect_camelcase_function, detect_trailing_whitespace,
-                                detect_todo, detect_tab_indentation, detect_multi_import,
-                            ]:
-                                result = detector(adj_text, adj_lineno, file_path=hunk.file_path)
-                                if result is not None:
-                                    issues.append(result)
-
-                # Missing function docstring – need to peek at the next line
-                after = hunk.lines[i + 1].content if i + 1 < len(hunk.lines) and hunk.lines[i + 1].line_type != "add" else ""
-                result = detect_missing_function_docstring(text, lineno, after_text=after, file_path=hunk.file_path)
-                if result is not None:
-                    issues.append(result)
-
-                # Missing module docstring – check if this is the first added line in the file
-                is_first_added = len(hunk_added_lines) == 1
-                result = detect_missing_module_docstring(text, lineno, file_path=hunk.file_path, is_first_line=is_first_added)
-                if result is not None:
-                    issues.append(result)
+            from prguard_ai.analysis.detectors import DetectorRegistry
+            issues.extend(DetectorRegistry.match_all("style", diff_lines, hunk.file_path))
 
             issues.extend(_detect_frontend_design_issues(hunk))
 
