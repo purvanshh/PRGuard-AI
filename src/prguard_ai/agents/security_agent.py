@@ -86,9 +86,14 @@ class SecurityAgent(BaseAgent):
         needs: List[str] = ["dependency_scan"]
         combined = diff_text.lower()
         if any(term in combined for term in ["secret", "token", "password", "key", "auth", "credential"]):
+            needs.append("secret_scan")
             needs.append("search_codebase")
         if changed_files:
             needs.append("git_blame")
+        needs.append("cve_lookup")
+        has_python = any(f.endswith(".py") for f in changed_files)
+        if has_python and any(term in combined for term in ["auth", "login", "permission", "role", "admin"]):
+            needs.append("check_auth_patterns")
         return needs[:3]
 
     def detect_suspicious_findings(self, issues: List[Issue], diff_text: str) -> List[str]:
@@ -98,6 +103,12 @@ class SecurityAgent(BaseAgent):
                 return ["dependency_scan"]
             if any(t in msg for t in ["file", "path", "read", "write", "open"]):
                 return ["read_file"]
+            if any(t in msg for t in ["cve", "vulnerability", "vulnerable"]):
+                return ["cve_lookup"]
+            if any(t in msg for t in ["secret", "token", "credential", "api key"]):
+                return ["secret_scan"]
+            if any(t in msg for t in ["auth", "login", "permission", "authorization"]):
+                return ["check_auth_patterns"]
         return []
 
     def synthesize_issues(self, diff_text: str, tool_outputs: Dict[str, Any]) -> List[Issue]:

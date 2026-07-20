@@ -249,16 +249,24 @@ class StyleAgent(BaseAgent):
         )
         if has_python:
             needs.append("run_linter")
+            needs.append("check_formatting")
         if has_frontend:
             needs.append("search_codebase")
         if changed_files:
             needs.append("read_file")
+        if has_python or has_frontend:
+            needs.append("get_repo_style_guide")
         return needs[:3]
 
     def detect_suspicious_findings(self, issues: List[Issue], diff_text: str) -> List[str]:
         for issue in issues:
             if issue.file_path and issue.confidence_source == "llm_reasoning":
-                return ["read_file"]
+                needs = ["read_file"]
+                msg = issue.message.lower()
+                if any(t in msg for t in ["format", "indent", "spacing", "line length"]):
+                    needs.append("check_formatting")
+                    needs.append("get_repo_style_guide")
+                return needs[:3]
         return []
 
     def synthesize_issues(self, diff_text: str, tool_outputs: Dict[str, Any]) -> List[Issue]:

@@ -67,6 +67,20 @@ class BaseAgent(ABC):
             return {}
         if tool == "run_test":
             return {"target": "tests"}
+        if tool == "check_formatting" and changed_files:
+            return {"path": changed_files[0]}
+        if tool == "get_repo_style_guide":
+            return {}
+        if tool == "symbolic_execute" and changed_files:
+            return {"path": changed_files[0], "function": ""}
+        if tool == "check_dead_code" and changed_files:
+            return {"path": changed_files[0]}
+        if tool == "cve_lookup":
+            return {}
+        if tool == "secret_scan":
+            return {"path": "."}
+        if tool == "check_auth_patterns":
+            return {"path": "."}
         return {}
 
     def _execute_tools(self, plan: Sequence[ToolInvocation]) -> Dict[str, Any]:
@@ -88,7 +102,7 @@ class BaseAgent(ABC):
         for tool_name in suspicious:
             if tool_name in tool_outputs:
                 continue
-            changed = [k for k in ["read_file", "run_linter", "git_blame"] if k in self.executor.available_tools]
+            changed = [k for k in ["read_file", "run_linter", "git_blame", "check_formatting", "check_dead_code", "secret_scan"] if k in self.executor.available_tools]
             args = self._args_for_tool(tool_name, changed)
             self.reasoning_trace.append(f"{self.agent_name}: verifying suspicious finding with tool={tool_name}")
             result = self.executor.execute(ToolInvocation(tool=tool_name, args=args, rationale="verification"))

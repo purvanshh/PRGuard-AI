@@ -138,6 +138,9 @@ class LogicAgent(BaseAgent):
             needs.append("get_type_info")
         if has_python:
             needs.append("run_test")
+            needs.append("symbolic_execute")
+            needs.append("check_dead_code")
+        if has_python:
             needs.append("search_codebase")
         return needs[:3]
 
@@ -148,6 +151,10 @@ class LogicAgent(BaseAgent):
                 return ["run_test"]
             if any(t in msg for t in ["type", "return", "parameter", "argument"]):
                 return ["get_type_info"]
+            if any(t in msg for t in ["unreachable", "dead code", "after return"]):
+                return ["check_dead_code"]
+            if any(t in msg for t in ["branch", "path", "condition", "control flow"]):
+                return ["symbolic_execute"]
         return []
 
     def synthesize_issues(self, diff_text: str, tool_outputs: Dict[str, Any]) -> List[Issue]:
