@@ -288,12 +288,16 @@ class StyleAgent(BaseAgent):
         issues: List[Issue] = []
         for hunk in relevant_hunks:
             diff_lines: list[tuple[int, str]] = []
+            all_text_lines: list[str] = []
             for line_obj in hunk.lines:
                 if line_obj.line_type == "add" and line_obj.content.strip():
-                    diff_lines.append(((line_obj.new_lineno or 1), line_obj.content))
+                    lineno = line_obj.new_lineno or 1
+                    diff_lines.append((lineno, line_obj.content))
+                    all_text_lines.append(line_obj.content)
 
             from prguard_ai.analysis.detectors import DetectorRegistry
-            issues.extend(DetectorRegistry.match_all("style", diff_lines, hunk.file_path))
+            full_text = " ".join(all_text_lines)
+            issues.extend(DetectorRegistry.match_all("style", diff_lines, hunk.file_path, full_text))
 
             issues.extend(_detect_frontend_design_issues(hunk))
 

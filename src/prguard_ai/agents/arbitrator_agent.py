@@ -158,7 +158,7 @@ def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullR
     overall_confidence = aggregate_confidence_with_weights(successful_outputs)
 
     raw_issues: List[Issue] = [issue for output in successful_outputs for issue in output.issues]
-    issues = deduplicate_issues(raw_issues)
+    issues = deduplicate_issues(raw_issues, threshold=0.99)
     disagreements = detect_agent_disagreements(successful_outputs) + resolve_conflicts(successful_outputs)
 
     report = PullRequestReport(

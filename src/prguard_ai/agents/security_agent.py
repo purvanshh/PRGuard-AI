@@ -129,12 +129,26 @@ class SecurityAgent(BaseAgent):
         issues: List[Issue] = []
         for h in file_hunks:
             diff_lines: list[tuple[int, str]] = []
-            for line_obj in h.lines:
+            all_text_lines: list[str] = []
+            added_set: set[int] = set()
+            seen: set[int] = set()
+            for i, line_obj in enumerate(h.lines):
                 if line_obj.line_type == "add" and line_obj.content.strip():
-                    diff_lines.append(((line_obj.new_lineno or 1), line_obj.content))
+                    lineno = line_obj.new_lineno or 1
+                    seen.add(lineno)
+                    added_set.add(lineno)
+                    diff_lines.append((lineno, line_obj.content))
+                    all_text_lines.append(line_obj.content)
+                elif line_obj.content.strip():
+                    lineno = line_obj.new_lineno or (line_obj.old_lineno or 1)
+                    if lineno not in seen:
+                        seen.add(lineno)
+                        diff_lines.append((lineno, line_obj.content))
+                        all_text_lines.append(line_obj.content)
 
             from prguard_ai.analysis.detectors import DetectorRegistry
-            issues.extend(DetectorRegistry.match_all("security", diff_lines, h.file_path))
+            full_text = " ".join(all_text_lines)
+            issues.extend(DetectorRegistry.match_all("security", diff_lines, h.file_path, full_text, frozenset(added_set)))
 
         dep_scan = tool_outputs.get("dependency_scan") or {}
         for suspicious in dep_scan.get("suspicious", []):
