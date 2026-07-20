@@ -246,7 +246,7 @@ The system is a **layered, event-driven architecture** with an HTTP-triggered as
 | **Linting** | flake8 | Configured in `.flake8` (max-line-length=120, ignores formatter rules) |
 | **Container** | Docker | `python:3.11-slim` base |
 | **Orchestration** | docker-compose | v3.9 (five services: api, worker, redis-data, redis-broker, db) |
-| **Testing** | pytest | 251 tests across diff parsing, agents, scoring, full pipeline, health, metrics, DB, circuit breaker, evaluator, model routing, scalability, observability, security, human review, per-agent tool system, policy engine, feedback loop, etc. |
+| **Testing** | pytest | 288 tests across diff parsing, agents, scoring, full pipeline, health, metrics, DB, circuit breaker, evaluator, model routing, scalability, observability, security, human review, per-agent tool system, policy engine, feedback loop, batch review, etc. |
 
 ### 4.2 Why Each Was Likely Chosen
 
@@ -852,7 +852,7 @@ class LLMUsage(Base):
 - **Distributed task queues**: Using Celery to run long-running analysis tasks asynchronously with retry and time limits.
 - **Observability**: Structured JSON logging, Prometheus metrics, OpenTelemetry tracing, comprehensive health checks.
 - **Data persistence**: Async SQLAlchemy with PostgreSQL, Alembic migrations, Redis caching.
-- **DevOps**: Docker, docker-compose, CI pipeline with flake8 linting, 251 tests with 79% coverage.
+- **DevOps**: Docker, docker-compose, CI pipeline with flake8 linting, 288 tests with 77% coverage.
 - **Security**: HMAC verification, rate limiting, budget management, input sanitization, circuit breaker for API resilience.
 
 ### 12.3 How to Replicate or Build Something Similar
@@ -1007,4 +1007,4 @@ Prometheus gauge `CIRCUIT_BREAKER_STATE`: 0=CLOSED, 1=HALF_OPEN, 2=OPEN.
 
 ---
 
-*End of study guide. Last updated: 2026-07-20 — reflects all 17 phases of development (251 tests, 79% coverage, PostgreSQL + Alembic, circuit breaker, Prometheus metrics, structured logging, repo caching, health checks, evaluation framework, flake8 integration, model routing, scalability, observability, security hardening, human-in-the-loop, per-agent tool system, policy engine, feedback loop, prompt management, Helm + Terraform).*
+*End of study guide. Last updated: 2026-07-20 — reflects all 17 phases of development (288 tests, 77% coverage, PostgreSQL + Alembic, circuit breaker, Prometheus metrics, structured logging, repo caching, health checks, evaluation framework, flake8 integration, model routing, scalability, observability, security hardening, human-in-the-loop, per-agent tool system, policy engine, feedback loop, prompt management, batch review pipeline, Helm + Terraform).*

@@ -47,6 +47,9 @@ logs/
 .repo_cache/
 chroma_data/
 
+# Dataset files (CVE PR diffs, evaluation results)
+dataset/
+
 # Database files (SQLite → migrated to PostgreSQL)
 prguard_logs.sqlite
 *.db

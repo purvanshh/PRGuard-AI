@@ -47,7 +47,7 @@ celery -A prguard_ai.task_queue.celery_app worker --loglevel=info
 ## 3. Running Tests
 
 ```bash
-# Full test suite (251 tests, 79% coverage)
+# Full test suite (288 tests, 77% coverage)
 pytest
 
 # Lint
