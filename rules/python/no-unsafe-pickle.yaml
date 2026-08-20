@@ -1,0 +1,23 @@
+rules:
+  - id: no-unsafe-pickle
+    languages:
+      - python
+    message: >-
+      Detected unpickling of data that may originate from an untrusted source.
+      pickle deserialization can execute arbitrary code during unpickling
+      (CVE-2020-1747 class). Use a safe serialization format such as JSON.
+    severity: WARNING
+    metadata:
+      category: security
+      confidence: HIGH
+      impact: HIGH
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      owasp:
+        - "A03:2021 - Injection"
+      technology:
+        - python
+    patterns:
+      - pattern-either:
+          - pattern: pickle.loads($ARG)
+          - pattern: pickle.load($ARG)

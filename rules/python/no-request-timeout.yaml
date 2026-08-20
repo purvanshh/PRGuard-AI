@@ -1,0 +1,29 @@
+rules:
+  - id: no-request-timeout
+    languages:
+      - python
+    message: >-
+      Detected an HTTP request without an explicit timeout. A slow or hanging
+      endpoint can block the worker indefinitely. Pass a timeout (seconds)
+      to every requests call.
+    severity: WARNING
+    metadata:
+      category: security
+      confidence: MEDIUM
+      impact: MEDIUM
+      cwe:
+        - "CWE-400: Uncontrolled Resource Consumption"
+      owasp:
+        - "A04:2021 - Insecure Design"
+      technology:
+        - python
+    patterns:
+      - pattern-either:
+          - pattern: requests.get(...)
+          - pattern: requests.post(...)
+          - pattern: requests.put(...)
+          - pattern: requests.delete(...)
+          - pattern: requests.patch(...)
+          - pattern: requests.head(...)
+          - pattern: requests.options(...)
+      - pattern-not: requests.$METHOD(..., timeout=$T)

@@ -1,0 +1,33 @@
+rules:
+  - id: no-sql-string-concat
+    languages:
+      - python
+    message: >-
+      Detected SQL query constructed by string concatenation or f-strings.
+      Untrusted values interpolated into the statement enable SQL injection.
+      Use parameterized queries (?, :name, %(name)s).
+    severity: ERROR
+    metadata:
+      category: security
+      confidence: HIGH
+      impact: HIGH
+      cwe:
+        - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command"
+      owasp:
+        - "A03:2021 - Injection"
+      technology:
+        - python
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-either:
+                  - pattern: $X.$EXEC($QUERY + $ARG)
+                  - pattern: $X.$EXEC($QUERY + $ARG, ...)
+              - focus-metavariable: $QUERY
+              - pattern-regex: "(?i)(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|UNION)"
+          - patterns:
+              - pattern-either:
+                  - pattern: $X.$EXEC($STMT)
+                  - pattern: $X.$EXEC($STMT, ...)
+              - focus-metavariable: $STMT
+              - pattern-regex: "(?i)f\\\"(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|UNION)"

@@ -1,0 +1,23 @@
+rules:
+  - id: no-unsafe-eval
+    languages:
+      - python
+    message: >-
+      Detected use of eval()/exec() on input that may be attacker controlled.
+      This can lead to arbitrary code execution. Prefer ast.literal_eval or a
+      dedicated parser.
+    severity: WARNING
+    metadata:
+      category: security
+      confidence: HIGH
+      impact: HIGH
+      cwe:
+        - "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+      owasp:
+        - "A03:2021 - Injection"
+      technology:
+        - python
+    patterns:
+      - pattern-either:
+          - pattern: eval($ARG)
+          - pattern: exec($ARG)
