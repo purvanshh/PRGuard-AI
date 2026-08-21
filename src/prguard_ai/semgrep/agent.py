@@ -103,6 +103,29 @@ def _filter_to_changed_files(findings: List[SemgrepFinding], changed: set[str]) 
     return [f for f in findings if f.file_path in changed]
 
 
+def _apply_dynamic_weights(issues: List[Any]) -> None:
+    """Demote noisy Semgrep rules based on historical false-positive rates.
+
+    Resolves each rule's effective weight through the configured feedback
+    provider (PostgreSQL-backed in production) and stores the result as a
+    per-issue ``source_weight_override`` so confidence scoring honors it.
+    """
+    if not issues:
+        return
+    from prguard_ai.semgrep.weights import DEFAULT_SEMGREP_WEIGHT, DynamicSemgrepWeight, get_db_feedback_provider
+
+    resolver = DynamicSemgrepWeight(provider=get_db_feedback_provider())
+    cache: dict[str, float] = {}
+    for issue in issues:
+        if issue.confidence_source != "semgrep" or not issue.rule_id:
+            continue
+        if issue.rule_id not in cache:
+            cache[issue.rule_id] = resolver.weight_for(issue.rule_id)
+        effective = cache[issue.rule_id]
+        if effective != DEFAULT_SEMGREP_WEIGHT:
+            issue.source_weight_override = effective
+
+
 def run_semgrep_scan(diff_text: str, repo_metadata: Dict[str, Any] | None = None):
     """Run Semgrep against the sandbox clone and return an AgentOutput."""
     from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
@@ -140,6 +163,7 @@ def run_semgrep_scan(diff_text: str, repo_metadata: Dict[str, Any] | None = None
     findings = _filter_to_changed_files(findings, _diff_changed_files(diff_text))
     findings = findings[:MAX_SEMGREP_ISSUES]
     issues = findings_to_issues(findings)
+    _apply_dynamic_weights(issues)
 
     reasoning_trace.append(f"semgrep: found {len(issues)} issue(s) in the diff")
     confidence = estimate_issue_confidence(issues, empty_confidence=0.55)

@@ -22,6 +22,14 @@ class Issue(BaseModel):
         description="Optional path to the file where the issue was detected.",
     )
     verified: bool = Field(default=False, description="True when evidence was verified against source.")
+    rule_id: Optional[str] = Field(
+        default=None,
+        description="Optional deterministic rule identifier (e.g. Semgrep rule id).",
+    )
+    source_weight_override: Optional[float] = Field(
+        default=None,
+        description="Optional per-issue source weight overriding the confidence_source lookup.",
+    )
 
     @field_validator("severity")
     @classmethod

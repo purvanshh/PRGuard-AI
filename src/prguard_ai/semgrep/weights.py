@@ -101,11 +101,104 @@ class MemoryFeedbackProvider:
         return self.counts.get(rule_id)
 
 
+class DatabaseFeedbackProvider:
+    """Production provider: reads ignored-finding counts from PostgreSQL.
+
+    Findings are correlated to Semgrep rules via the ``[semgrep/<rule-id>]``
+    message prefix in the ``findings`` table; "ignored" is derived from
+    ``online_feedback`` (dismiss/reject/thumbsdown) and ``human_feedback``
+    (reject) signals. Best-effort: returns ``None`` (keeping the default 0.9
+    weight) when the database is unreachable or no feedback has been recorded.
+    """
+
+    IGNORED_SIGNALS = ("dismiss", "ignore", "reject", "thumbsdown")
+
+    def __init__(self, days: int = LOOKBACK_DAYS) -> None:
+        self.days = int(days)
+
+    def ignored_counts(self, rule_id: str, days: int = LOOKBACK_DAYS) -> Optional[tuple[int, int]]:
+        import os
+
+        if os.getenv("PRGUARD_TESTING") == "true" or "PYTEST_CURRENT_TEST" in os.environ:
+            return None
+        try:
+            from prguard_ai.db.session import run_async
+
+            return run_async(self._query(rule_id, days or self.days))
+        except Exception:
+            logger.warning("Semgrep feedback query failed for rule %s", rule_id, exc_info=True)
+            return None
+
+    async def _query(self, rule_id: str, days: int) -> Optional[tuple[int, int]]:
+        import time
+
+        from sqlalchemy import func, select
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from prguard_ai.config.settings import settings
+        from prguard_ai.db.models import FindingRecord, HumanFeedback, OnlineFeedback
+
+        url = settings.database_url
+        if url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        # Dedicated engine per query avoids async loop-binding issues when the
+        # shared engine is used from sync Celery contexts.
+        engine = create_async_engine(url, pool_pre_ping=True)
+        try:
+            session_factory = async_sessionmaker(engine, expire_on_commit=False)
+            async with session_factory() as session:
+                cutoff = time.time() - int(days) * 86400
+                pattern = f"[semgrep/{rule_id}]%"
+                total = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(FindingRecord)
+                        .where(FindingRecord.message.like(pattern), FindingRecord.created_at >= cutoff)
+                    )
+                ).scalar() or 0
+                if not total:
+                    return None
+                online_ignored = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(FindingRecord)
+                        .join(OnlineFeedback, OnlineFeedback.finding_key == FindingRecord.finding_key)
+                        .where(
+                            FindingRecord.message.like(pattern),
+                            FindingRecord.created_at >= cutoff,
+                            OnlineFeedback.signal.in_(self.IGNORED_SIGNALS),
+                        )
+                    )
+                ).scalar() or 0
+                human_ignored = (
+                    await session.execute(
+                        select(func.count())
+                        .select_from(FindingRecord)
+                        .join(HumanFeedback, HumanFeedback.finding_key == FindingRecord.finding_key)
+                        .where(
+                            FindingRecord.message.like(pattern),
+                            FindingRecord.created_at >= cutoff,
+                            HumanFeedback.decision == "reject",
+                        )
+                    )
+                ).scalar() or 0
+                return int(total), int(online_ignored) + int(human_ignored)
+        finally:
+            await engine.dispose()
+
+
+def get_db_feedback_provider() -> RuleFeedbackProvider:
+    """Return the production feedback provider wired to PostgreSQL."""
+    return DatabaseFeedbackProvider()
+
+
 __all__ = [
     "DEFAULT_SEMGREP_WEIGHT",
+    "DatabaseFeedbackProvider",
     "DynamicSemgrepWeight",
     "MemoryFeedbackProvider",
     "NoopFeedbackProvider",
     "RuleFeedbackProvider",
     "compute_effective_weight",
+    "get_db_feedback_provider",
 ]

@@ -107,6 +107,7 @@ def findings_to_issues(findings: List[SemgrepFinding]) -> Any:
                 confidence_source="semgrep",
                 file_path=finding.file_path or None,
                 verified=True,
+                rule_id=finding.rule_id,
             )
         )
     return issues

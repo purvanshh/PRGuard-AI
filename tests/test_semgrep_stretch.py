@@ -105,6 +105,56 @@ def test_memory_provider_reduces_noisy_rule():
     assert resolver.weight_for("rules.python.no-request-timeout") == DEFAULT_SEMGREP_WEIGHT
 
 
+def test_db_provider_noops_in_testing(monkeypatch):
+    from prguard_ai.semgrep.weights import DatabaseFeedbackProvider
+
+    assert DatabaseFeedbackProvider().ignored_counts("r1") is None
+
+
+def test_findings_to_issues_carries_rule_id():
+    from prguard_ai.semgrep.parser import SemgrepFinding, findings_to_issues
+
+    finding = SemgrepFinding("rules.python.no-shell-true", "medium", "m", "app.py", 1, "e")
+    issue = findings_to_issues([finding])[0]
+    assert issue.rule_id == "rules.python.no-shell-true"
+
+
+def test_scoring_uses_source_weight_override():
+    from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
+    from prguard_ai.schemas.agent_output import Issue
+
+    issue = Issue(
+        line=1, severity="high", message="m", evidence="e",
+        confidence_source="semgrep", verified=True, source_weight_override=0.6,
+    )
+    confidence = estimate_issue_confidence([issue], empty_confidence=0.5)
+    assert 0.75 < confidence < 0.9
+
+
+def test_apply_dynamic_weights_demotes_noisy_rule(monkeypatch):
+    from prguard_ai.semgrep import agent as semgrep_agent
+    from prguard_ai.semgrep.parser import SemgrepFinding, findings_to_issues
+    from prguard_ai.semgrep.weights import MemoryFeedbackProvider
+
+    class _Provider:
+        def __init__(self):
+            self.inner = MemoryFeedbackProvider({"rules.python.no-shell-true": (20, 10)})
+
+        def ignored_counts(self, rule_id, days=30):
+            return self.inner.ignored_counts(rule_id, days)
+
+    monkeypatch.setattr("prguard_ai.semgrep.weights.get_db_feedback_provider", lambda: _Provider())
+    findings = [
+        SemgrepFinding("rules.python.no-shell-true", "medium", "m", "app.py", 1, "e"),
+        SemgrepFinding("rules.python.no-request-timeout", "medium", "m", "app.py", 2, "e"),
+    ]
+    issues = findings_to_issues(findings)
+    semgrep_agent._apply_dynamic_weights(issues)
+    by_rule = {i.rule_id: i.source_weight_override for i in issues}
+    assert by_rule["rules.python.no-shell-true"] == 0.6
+    assert by_rule["rules.python.no-request-timeout"] is None
+
+
 # --------------------------------------------------------------------------
 # D3: semgrep_scan tool + agent synergy
 # --------------------------------------------------------------------------

@@ -47,7 +47,11 @@ class ConfidenceScorer:
 
         scores = []
         for issue in issues_list:
-            source_score = self.source_weights.get(issue.confidence_source, 0.38)
+            source_score = (
+                issue.source_weight_override
+                if issue.source_weight_override is not None
+                else self.source_weights.get(issue.confidence_source, 0.38)
+            )
             severity_score = self.severity_weights.get(issue.severity.lower(), 0.45)
             verification_bonus = 0.04 if issue.verified else 0.0
             scores.append(min(1.0, (source_score + severity_score) / 2 + verification_bonus))
@@ -129,7 +133,11 @@ def estimate_issue_confidence(
         return empty_confidence
     scores = []
     for issue in issues_list:
-        source_score = SOURCE_WEIGHTS.get(issue.confidence_source, SOURCE_WEIGHTS["inferred"])
+        source_score = (
+            issue.source_weight_override
+            if issue.source_weight_override is not None
+            else SOURCE_WEIGHTS.get(issue.confidence_source, SOURCE_WEIGHTS["inferred"])
+        )
         severity_score = SEVERITY_WEIGHTS.get(issue.severity.lower(), SEVERITY_WEIGHTS["low"])
         verification_bonus = 0.04 if issue.verified else 0.0
         scores.append(min(1.0, (source_score + severity_score) / 2 + verification_bonus))
