@@ -1,0 +1,28 @@
+rules:
+  - id: no-request-timeout
+    languages:
+      - javascript
+    message: >-
+      Detected an HTTP request without an explicit timeout. A slow or hanging
+      endpoint can block the process indefinitely. Pass a timeout (ms) in the
+      options object to every request call.
+    severity: WARNING
+    metadata:
+      category: security
+      confidence: MEDIUM
+      impact: MEDIUM
+      cwe:
+        - "CWE-400: Uncontrolled Resource Consumption"
+      owasp:
+        - "A04:2021 - Insecure Design"
+      technology:
+        - javascript
+    patterns:
+      - pattern-either:
+          - pattern: request.get(...)
+          - pattern: request.post(...)
+          - pattern: request.put(...)
+          - pattern: request.delete(...)
+          - pattern: request.patch(...)
+          - pattern: request.head(...)
+      - pattern-not: "request.$METHOD($URL, { ..., timeout: $T })"

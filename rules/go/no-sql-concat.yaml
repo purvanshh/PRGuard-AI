@@ -1,0 +1,25 @@
+rules:
+  - id: no-sql-concat
+    languages:
+      - go
+    message: >-
+      Detected a SQL query constructed by string concatenation. Untrusted
+      values interpolated into the statement enable SQL injection. Use
+      parameterized queries (?, $1) instead.
+    severity: ERROR
+    metadata:
+      category: security
+      confidence: HIGH
+      impact: HIGH
+      cwe:
+        - "CWE-89: Improper Neutralization of Special Elements used in an SQL Command"
+      owasp:
+        - "A03:2021 - Injection"
+      technology:
+        - golang
+    patterns:
+      - pattern-either:
+          - pattern: $X.$EXEC($QUERY + $ARG)
+          - pattern: $X.$EXEC($QUERY + $ARG, ...)
+      - focus-metavariable: $QUERY
+      - pattern-regex: "(?i)(SELECT|INSERT|UPDATE|DELETE|FROM|WHERE|UNION)"

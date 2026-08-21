@@ -1,0 +1,23 @@
+rules:
+  - id: no-unwrap-result
+    languages:
+      - rust
+    message: >-
+      Detected .unwrap() on a Result inside an unsafe block. A panic inside
+      unsafe code can leave memory in an inconsistent state and is undefined
+      behavior adjacent. Handle the Err case explicitly with match or
+      .expect() instead.
+    severity: WARNING
+    metadata:
+      category: security
+      confidence: MEDIUM
+      impact: MEDIUM
+      cwe:
+        - "CWE-248: Uncaught Exception"
+      owasp:
+        - "A04:2021 - Insecure Design"
+      technology:
+        - rust
+    patterns:
+      - pattern-inside: unsafe { ... }
+      - pattern: $X.unwrap()
