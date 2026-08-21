@@ -13,6 +13,31 @@ from prguard_ai.semgrep.parser import SemgrepFinding, parse_semgrep_json
 logger = logging.getLogger(__name__)
 
 
+def _relativize(finding: SemgrepFinding, target: Path) -> SemgrepFinding:
+    """Normalize absolute finding paths to repo-relative paths."""
+    raw = finding.file_path
+    if not raw:
+        return finding
+    path = Path(raw)
+    if not path.is_absolute():
+        return finding
+    try:
+        rel = path.resolve().relative_to(target.resolve())
+    except (ValueError, OSError):
+        return finding
+    return SemgrepFinding(
+        rule_id=finding.rule_id,
+        severity=finding.severity,
+        message=finding.message,
+        file_path=str(rel),
+        line=finding.line,
+        evidence=finding.evidence,
+        category=finding.category,
+        cwe=finding.cwe,
+        owasp=finding.owasp,
+    )
+
+
 class SemgrepScanner:
     """Runs Semgrep scans and returns normalized findings.
 
@@ -108,10 +133,12 @@ class SemgrepScanner:
             return []
 
         try:
-            return parse_semgrep_json(completed.stdout)
+            findings = parse_semgrep_json(completed.stdout)
         except Exception as exc:
             logger.error("Failed to parse semgrep output from %s: %s", target, exc)
             return []
+
+        return [_relativize(finding, target) for finding in findings]
 
 
 __all__ = ["SemgrepScanner"]

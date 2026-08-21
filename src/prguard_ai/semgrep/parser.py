@@ -61,7 +61,7 @@ def _result_to_finding(result: dict) -> Optional[SemgrepFinding]:
         rule_id=check_id,
         severity=_normalize_severity(extra.get("severity")),
         message=str(extra.get("message") or check_id).strip()[:500],
-        file_path=str(result.get("path") or "").lstrip("/"),
+        file_path=str(result.get("path") or "").strip(),
         line=line,
         evidence=evidence[:400],
         category=str(metadata.get("category") or "") or None,
