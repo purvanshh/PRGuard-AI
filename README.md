@@ -164,8 +164,6 @@ Every finding carries a `confidence_source` tag that maps to a numeric weight:
 
 ---
 
----
-
 ## Setup
 
 ### Prerequisites
