@@ -322,6 +322,8 @@ The client falls back to `GITHUB_TOKEN` if App credentials are not provided.
 | `SEMGREP_TIMEOUT_SECONDS` | No | `90` | Max execution time for a Semgrep scan per PR |
 | `SEMGREP_MAX_TARGET_BYTES` | No | `2000000` | Skip files larger than this many bytes during a scan |
 | `SEMGREP_BASELINE_REF` | No | `origin/main` | Git ref for diff-aware (PR-time) scanning |
+| `SEMGREP_PERSIST_LOGS` | No | `true` | Persist each Semgrep run to `agent_logs` for historical FP tracking |
+| `PRGUARD_FLAG_SEMGREP_AUTOFIX` | No | `false` | Enable applying + pushing Semgrep autofix commits to PR branches |
 
 *Required unless GitHub App authentication is configured.*
 
