@@ -1,0 +1,35 @@
+# Semgrep ignore patterns (Phase 5 tuning)
+# Files and directories below are excluded from every PRGuard Semgrep scan.
+
+# Build artifacts and generated code
+dist/
+build/
+*.egg-info/
+__pycache__/
+*.pyc
+
+# Vendored or third-party code that should not be scanned
+.venv/
+.venv-test/
+venv/
+node_modules/
+site-packages/
+
+# Dependencies and lockfiles
+*.lock
+
+# Test fixtures that intentionally contain vulnerable patterns
+fixtures/
+
+# Custom rule test fixtures (intentionally vulnerable, validated via semgrep test)
+rules/
+
+# Local data stores
+.repo_cache/
+.chroma/
+*.sqlite
+
+# CI / deployment generated outputs
+.coverage
+.semgrep_report.html
+semgrep.sarif
