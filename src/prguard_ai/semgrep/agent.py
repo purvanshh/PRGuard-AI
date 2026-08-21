@@ -7,6 +7,7 @@ Style/Logic/Security LLM agents.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -31,6 +32,37 @@ def _should_persist() -> bool:
     return settings.semgrep_persist_logs and not _in_testing()
 
 
+async def _insert_agent_log(pr_id: str, payload: Dict[str, Any], started_at: float, duration: float) -> None:
+    """Insert an AgentLog row using a dedicated engine (loop-safe from sync
+    Celery contexts — the shared async engine can bind to a foreign loop)."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from prguard_ai.db.models import AgentLog
+
+    url = settings.database_url
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    engine = create_async_engine(url, pool_pre_ping=True)
+    try:
+        async with async_sessionmaker(engine, expire_on_commit=False)() as session:
+            async with session.begin():
+                session.add(
+                    AgentLog(
+                        pr_id=str(pr_id),
+                        agent="semgrep",
+                        started_at=float(started_at),
+                        finished_at=float(started_at + duration),
+                        confidence=float(payload.get("confidence", 0.0)),
+                        token_usage=0,
+                        execution_duration=float(duration),
+                        agent_order=3,
+                        payload=json.dumps(payload, default=str),
+                    )
+                )
+    finally:
+        await engine.dispose()
+
+
 def log_semgrep_run(
     pr_id: str,
     output: Any,
@@ -48,22 +80,11 @@ def log_semgrep_run(
         return
     try:
         from prguard_ai.db.session import run_async
-        from prguard_ai.observability.logging import log_agent_execution
 
         payload = output.model_dump() if hasattr(output, "model_dump") else dict(output)
         payload["findings_count"] = len(findings)
         payload["rules_used"] = sorted({f.rule_id for f in findings})
-        run_async(
-            log_agent_execution(
-                pr_id=str(pr_id),
-                agent="semgrep",
-                started_at=float(started_at),
-                finished_at=float(started_at + duration),
-                output=payload,
-                execution_duration=float(duration),
-                agent_order=3,
-            )
-        )
+        run_async(_insert_agent_log(str(pr_id), payload, started_at, duration))
     except Exception:
         logger.warning("Failed to persist Semgrep run for %s", pr_id, exc_info=True)
 

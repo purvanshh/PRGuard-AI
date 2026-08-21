@@ -248,6 +248,30 @@ def test_log_semgrep_run_requires_pr_id(monkeypatch):
     semgrep_agent.log_semgrep_run("", {"confidence": 0.9}, [], started_at=0.0, duration=0.1)
 
 
+def test_log_semgrep_run_builds_payload(monkeypatch):
+    import asyncio
+
+    from prguard_ai.semgrep import agent as semgrep_agent
+    from prguard_ai.semgrep.parser import SemgrepFinding
+
+    captured = {}
+
+    async def _fake_insert(pr_id, payload, started_at, duration):
+        captured.update(pr_id=pr_id, payload=payload, started_at=started_at, duration=duration)
+
+    monkeypatch.setattr(semgrep_agent, "_should_persist", lambda: True)
+    monkeypatch.setattr(semgrep_agent, "_insert_agent_log", _fake_insert)
+    monkeypatch.setattr("prguard_ai.db.session.run_async", asyncio.run)
+
+    findings = [SemgrepFinding("rules.python.no-shell-true", "medium", "m", "app.py", 1, "e")]
+    semgrep_agent.log_semgrep_run("owner/repo#5", {"confidence": 0.9, "issues": []}, findings, started_at=100.0, duration=0.5)
+
+    assert captured["pr_id"] == "owner/repo#5"
+    assert captured["payload"]["findings_count"] == 1
+    assert captured["payload"]["rules_used"] == ["rules.python.no-shell-true"]
+    assert captured["duration"] == 0.5
+
+
 def test_review_pr_chord_includes_semgrep_when_enabled(monkeypatch):
     import json as _json
 
