@@ -9,9 +9,11 @@ from prguard_ai.task_queue.celery_app import (
     run_style_agent,
     run_logic_agent,
     run_security_agent,
+    run_semgrep_agent,
     refine_agent,
     on_chord_error,
 )
+from prguard_ai.semgrep.agent import semgrep_enabled_for
 from prguard_ai.analysis.repo_sandbox import cleanup_repository
 from prguard_ai.schemas.agent_output import AgentOutput
 from prguard_ai.schemas.context import ReviewContext
@@ -38,11 +40,14 @@ def review_pr(prepared: Dict[str, Any], pr_id: str, repo_metadata: Dict[str, Any
     with _TRACER.start_as_current_span("orchestrator_review_pr") as span:
         span.set_attribute("pr.id", pr_id)
         try:
-            initial_group = group(
+            initial_tasks = [
                 run_style_agent.s(diff_text, repo_metadata),
                 run_logic_agent.s(diff_text, repo_metadata),
                 run_security_agent.s(diff_text, repo_metadata),
-            )
+            ]
+            if semgrep_enabled_for(repo):
+                initial_tasks.append(run_semgrep_agent.s(diff_text, repo_metadata))
+            initial_group = group(*initial_tasks)
             workflow = chord(
                 initial_group,
                 process_initial_agent_outputs.s(pr_id, diff_text, repo_metadata, sandbox_path, repo, pr_number),

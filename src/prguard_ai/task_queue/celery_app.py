@@ -12,6 +12,7 @@ from celery import Celery
 from prguard_ai.agents.logic_agent import analyze_logic
 from prguard_ai.agents.security_agent import analyze_security
 from prguard_ai.agents.style_agent import analyze_style
+from prguard_ai.semgrep.agent import run_semgrep_scan
 from prguard_ai.config.settings import settings
 from prguard_ai.schemas.agent_output import AgentOutput
 from prguard_ai.observability.tracing import get_tracer
@@ -39,6 +40,7 @@ celery_app.conf.task_routes = {
     "task_queue.celery_app.run_style_agent": {"queue": "style"},
     "task_queue.celery_app.run_logic_agent": {"queue": "logic"},
     "task_queue.celery_app.run_security_agent": {"queue": "security"},
+    "task_queue.celery_app.run_semgrep_agent": {"queue": "semgrep"},
     "task_queue.celery_app.refine_agent": {"queue": "refinement"},
     "task_queue.orchestrator.review_pr": {"queue": "orchestrator"},
     "task_queue.orchestrator.process_initial_agent_outputs": {"queue": "orchestrator"},
@@ -179,6 +181,36 @@ def run_security_agent(diff_text: str, repo_metadata: Dict[str, Any] | None = No
 
 
 @celery_app.task(
+    name="task_queue.celery_app.run_semgrep_agent",
+    autoretry_for=(Exception,),
+    retry_backoff=True,
+    retry_kwargs={"max_retries": 1},
+    time_limit=300,
+    soft_time_limit=240,
+)
+def run_semgrep_agent(diff_text: str, repo_metadata: Dict[str, Any] | None = None) -> dict:
+    """Celery task that runs the deterministic Semgrep SAST scan."""
+    with _TRACER.start_as_current_span("agent_semgrep") as span:
+        meta = repo_metadata or {}
+        if meta.get("pr_id"):
+            span.set_attribute("pr.id", meta.get("pr_id"))
+        with AGENT_EXECUTION_TIME.labels(agent="semgrep").time():
+            try:
+                output: AgentOutput = run_semgrep_scan(diff_text, repo_metadata=meta)
+                return output.model_dump()
+            except Exception as exc:
+                logger.exception("Semgrep agent task failed")
+                record_agent_error("semgrep")
+                return {
+                    "agent": "semgrep",
+                    "confidence": 0.0,
+                    "issues": [],
+                    "llm_skipped": True,
+                    "error": str(exc),
+                }
+
+
+@celery_app.task(
     name="task_queue.celery_app.refine_agent",
     autoretry_for=(Exception,),
     retry_backoff=True,
@@ -216,6 +248,7 @@ __all__ = [
     "run_style_agent",
     "run_logic_agent",
     "run_security_agent",
+    "run_semgrep_agent",
     "refine_agent",
     "on_chord_error",
     "review_pr",
