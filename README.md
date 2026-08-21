@@ -62,7 +62,9 @@ flowchart TD
     subgraph CQ["Celery + Redis Task Queue"]
         direction TB
         ORCH["Orchestrator Task"] -->|"round 0 parallel run"| INIT["Style / Logic / Security Agents"]
+        ORCH -->|"parallel run"| SEMGREP["Semgrep Scanner"]
         INIT -->|"store context"| REDIS[("Redis Context Store")]
+        SEMGREP -->|"store findings"| REDIS
         REDIS -->|"refinement loop (rounds 1-3)"| REF["Refinement & Dialogue Pass"]
         REF -->|"stopping conditions check"| COORD["Coordinator Agent"]
         COORD -->|"if converged"| ARB["Confidence Arbitrator"]
@@ -144,6 +146,20 @@ Detects vulnerabilities using pattern matching and security-focused LLM promptin
 
 Each rule-based detection function (`detect_sql_injection`, `detect_eval_usage`, `detect_hardcoded_secrets`) is independently exported and testable.
 
+### Semgrep Scanner (4th Parallel Task)
+
+Runs as a distinct Celery chord task alongside the Style, Logic, and Security agents. Unlike the LLM-based agents, Semgrep is deterministic and requires no refinement rounds.
+
+| Pass | Method | What It Catches |
+|------|--------|-----------------|
+| AST Pattern Matching | Semgrep OSS engine | `shell=True` in subprocess, unsafe `eval()`/`pickle`, hardcoded secrets, SQL injection patterns |
+| Custom Rules | `rules/python/*.yaml` (test-first) | Project-specific anti-patterns (e.g., missing timeout on requests, credential logging) |
+| Diff-Aware | `--baseline-ref origin/main` | Only scans changed files in PRs, keeping scan time < 60 seconds |
+
+**Confidence Weight:** `semgrep` findings carry a deterministic `0.9` weight (`verified=True`), the highest in the system. Findings are deduplicated with LLM outputs by the Confidence Arbitrator based on file + line number.
+
+> **Note:** the Semgrep integration is feature-flag gated (`PRGUARD_FLAG_SEMGREP_INTEGRATION`, see [Environment Variables](#environment-variables)) and runs as a parallel chord task, so it does not add sequential latency to the end-to-end review.
+
 ---
 
 ## Confidence Scoring
@@ -152,6 +168,7 @@ Every finding carries a `confidence_source` tag that maps to a numeric weight:
 
 | Source | Weight | Meaning |
 |--------|--------|---------|
+| `semgrep` | **0.9** | Deterministic AST scan finding: highest certainty, auto-verified |
 | `rule_based` | **0.9** | Deterministic pattern match: high certainty |
 | `llm_reasoning` | **0.6** | LLM-generated finding: moderate certainty |
 | `inferred` | **0.3** | Heuristic or indirect signal: low certainty |
@@ -298,6 +315,13 @@ The client falls back to `GITHUB_TOKEN` if App credentials are not provided.
 | `GITHUB_APP_PRIVATE_KEY` | No | — | PEM private key string or file path |
 | `ADMIN_TOKEN` | No | `admin-secret-token` | Bearer token for the `/config` admin endpoint |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | `http://localhost:4317` | OpenTelemetry OTLP collector endpoint |
+| `PRGUARD_FLAG_SEMGREP_INTEGRATION` | No | `false` | Master feature flag for the Semgrep integration |
+| `PRGUARD_FLAG_SEMGREP_INTEGRATION_ROLLOUT_PERCENT` | No | `0` | Per-repo gradual rollout (0–100). E.g., `10` means 10% of repos get scanned |
+| `SEMGREP_BINARY` | No | `semgrep` | Semgrep binary path/name used by the scanner |
+| `SEMGREP_CONFIGS` | No | `p/owasp-top-ten` | Comma-separated Semgrep configs/rulesets |
+| `SEMGREP_TIMEOUT_SECONDS` | No | `90` | Max execution time for a Semgrep scan per PR |
+| `SEMGREP_MAX_TARGET_BYTES` | No | `2000000` | Skip files larger than this many bytes during a scan |
+| `SEMGREP_BASELINE_REF` | No | `origin/main` | Git ref for diff-aware (PR-time) scanning |
 
 *Required unless GitHub App authentication is configured.*
 
