@@ -195,6 +195,59 @@ def test_real_semgrep_binary_end_to_end(monkeypatch, tmp_path):
     assert matched[0].severity == "medium"
 
 
+def test_run_semgrep_scan_persists_run(monkeypatch, tmp_path):
+    from prguard_ai.semgrep import agent as semgrep_agent
+    from prguard_ai.semgrep.parser import SemgrepFinding
+
+    captured = {}
+
+    def _fake_log(pr_id, output, findings, started_at, duration):
+        captured["pr_id"] = pr_id
+        captured["findings"] = len(findings)
+        captured["duration"] = duration
+
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    (sandbox / "app.py").write_text("x = eval('1')\n")
+
+    monkeypatch.setenv("PRGUARD_FLAG_SEMGREP_INTEGRATION", "true")
+    monkeypatch.setattr(semgrep_agent, "log_semgrep_run", _fake_log)
+
+    class _FakeScanner:
+        configs = ["p/owasp-top-ten"]
+
+        def scan(self, target, baseline_ref=None):
+            return [SemgrepFinding("r1", "high", "m", "app.py", 1, "e")]
+
+    monkeypatch.setattr(semgrep_agent, "_load_scanner", lambda: _FakeScanner())
+    output = semgrep_agent.run_semgrep_scan(
+        "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -0,0 +1 @@\n+ x=eval('1')\n",
+        {"repository": "owner/repo", "pr_id": "owner/repo#9", "sandbox_path": str(sandbox)},
+    )
+    assert captured["pr_id"] == "owner/repo#9"
+    assert captured["findings"] == 1
+    assert captured["duration"] >= 0
+    assert output.issues[0].file_path == "app.py"
+
+
+def test_log_semgrep_run_noops_in_testing(monkeypatch):
+    from prguard_ai.semgrep.agent import _should_persist, log_semgrep_run
+
+    assert _should_persist() is False
+    log_semgrep_run("owner/repo#1", {"confidence": 0.9}, [], started_at=0.0, duration=0.1)
+
+
+def test_log_semgrep_run_requires_pr_id(monkeypatch):
+    from prguard_ai.semgrep import agent as semgrep_agent
+
+    def _boom(*_a, **_k):
+        raise AssertionError("DB should not be touched without a pr_id")
+
+    monkeypatch.setattr(semgrep_agent, "_should_persist", lambda: True)
+    monkeypatch.setattr("prguard_ai.db.session.run_async", _boom)
+    semgrep_agent.log_semgrep_run("", {"confidence": 0.9}, [], started_at=0.0, duration=0.1)
+
+
 def test_review_pr_chord_includes_semgrep_when_enabled(monkeypatch):
     import json as _json
 

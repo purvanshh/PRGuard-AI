@@ -8,6 +8,8 @@ Style/Logic/Security LLM agents.
 from __future__ import annotations
 
 import logging
+import os
+import time
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -19,6 +21,51 @@ from prguard_ai.semgrep.scanner import SemgrepScanner
 logger = logging.getLogger(__name__)
 
 MAX_SEMGREP_ISSUES = 50
+
+
+def _in_testing() -> bool:
+    return os.getenv("PRGUARD_TESTING") == "true" or "PYTEST_CURRENT_TEST" in os.environ
+
+
+def _should_persist() -> bool:
+    return settings.semgrep_persist_logs and not _in_testing()
+
+
+def log_semgrep_run(
+    pr_id: str,
+    output: Any,
+    findings: List[SemgrepFinding],
+    started_at: float,
+    duration: float,
+) -> None:
+    """Best-effort persistence of a Semgrep run to ``agent_logs``.
+
+    Wired for the dynamic-weight feedback loop: the payload records the
+    findings count and the set of rules that fired so historical FP rates can
+    be derived. Never raises — a failed DB write is logged and swallowed.
+    """
+    if not pr_id or not _should_persist():
+        return
+    try:
+        from prguard_ai.db.session import run_async
+        from prguard_ai.observability.logging import log_agent_execution
+
+        payload = output.model_dump() if hasattr(output, "model_dump") else dict(output)
+        payload["findings_count"] = len(findings)
+        payload["rules_used"] = sorted({f.rule_id for f in findings})
+        run_async(
+            log_agent_execution(
+                pr_id=str(pr_id),
+                agent="semgrep",
+                started_at=float(started_at),
+                finished_at=float(started_at + duration),
+                output=payload,
+                execution_duration=float(duration),
+                agent_order=3,
+            )
+        )
+    except Exception:
+        logger.warning("Failed to persist Semgrep run for %s", pr_id, exc_info=True)
 
 
 def semgrep_enabled_for(repo: str = "") -> bool:
@@ -77,14 +124,18 @@ def run_semgrep_scan(diff_text: str, repo_metadata: Dict[str, Any] | None = None
     scanner = _load_scanner()
     target = Path(str(sandbox_path))
     baseline_ref = settings.semgrep_baseline_ref
+    started_at = time.time()
     findings = scanner.scan(target, baseline_ref=baseline_ref)
+    duration = time.time() - started_at
 
     reasoning_trace.append(
         f"semgrep: scanned {target} with configs={scanner.configs} baseline={baseline_ref or 'none'}"
     )
     if not findings:
         reasoning_trace.append("semgrep: no findings")
-        return AgentOutput(agent="semgrep", confidence=0.55, reasoning_trace=reasoning_trace)
+        output = AgentOutput(agent="semgrep", confidence=0.55, reasoning_trace=reasoning_trace)
+        log_semgrep_run(meta.get("pr_id"), output, findings, started_at, duration)
+        return output
 
     findings = _filter_to_changed_files(findings, _diff_changed_files(diff_text))
     findings = findings[:MAX_SEMGREP_ISSUES]
@@ -92,13 +143,15 @@ def run_semgrep_scan(diff_text: str, repo_metadata: Dict[str, Any] | None = None
 
     reasoning_trace.append(f"semgrep: found {len(issues)} issue(s) in the diff")
     confidence = estimate_issue_confidence(issues, empty_confidence=0.55)
-    return AgentOutput(
+    output = AgentOutput(
         agent="semgrep",
         confidence=confidence,
         issues=issues,
         llm_skipped=True,
         reasoning_trace=reasoning_trace,
     )
+    log_semgrep_run(meta.get("pr_id"), output, findings, started_at, duration)
+    return output
 
 
 __all__ = ["run_semgrep_scan", "semgrep_enabled_for"]

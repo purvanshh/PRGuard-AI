@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     semgrep_timeout_seconds: int = Field(90, validation_alias="SEMGREP_TIMEOUT_SECONDS")
     semgrep_max_target_bytes: int = Field(2_000_000, validation_alias="SEMGREP_MAX_TARGET_BYTES")
     semgrep_baseline_ref: str = Field("origin/main", validation_alias="SEMGREP_BASELINE_REF")
+    semgrep_persist_logs: bool = Field(True, validation_alias="SEMGREP_PERSIST_LOGS")
 
     model_config = {"extra": "ignore", "env_file": ".env"}
 
