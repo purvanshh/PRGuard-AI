@@ -68,6 +68,67 @@ def test_autofix_rejects_bad_patch(monkeypatch, tmp_path):
     assert "patch rejected" in result["detail"]
 
 
+def test_authed_remote_builds_token_url():
+    from prguard_ai.semgrep.autofix import _build_authed_remote
+
+    remote = _build_authed_remote("tok", "owner/repo")
+    assert remote == "https://x-access-token:tok@github.com/owner/repo.git"
+
+
+def test_push_autofix_disabled(monkeypatch, tmp_path):
+    from prguard_ai.semgrep.autofix import push_autofix_commit
+
+    monkeypatch.delenv("PRGUARD_FLAG_SEMGREP_AUTOFIX", raising=False)
+    result = push_autofix_commit(tmp_path, "branch", "owner/repo")
+    assert result["pushed"] is False
+
+
+def test_push_autofix_without_token(monkeypatch, tmp_path):
+    from prguard_ai.semgrep.autofix import push_autofix_commit
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init"], capture_output=True, check=False)
+    monkeypatch.setenv("PRGUARD_FLAG_SEMGREP_AUTOFIX", "true")
+    monkeypatch.setattr("prguard_ai.semgrep.autofix._get_push_token", lambda: None)
+    result = push_autofix_commit(repo, "feat/x", "owner/repo")
+    assert result["pushed"] is False
+    assert "no GitHub token" in result["detail"]
+
+
+def test_push_autofix_builds_push_command(monkeypatch, tmp_path):
+    import subprocess as _sp
+
+    from prguard_ai.semgrep.autofix import push_autofix_commit
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("x = 2\n")
+    subprocess.run(["git", "-C", str(repo), "init"], capture_output=True, check=False)
+
+    captured = {}
+
+    class _Completed:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def _fake_git(repo_path, *args):
+        captured["cmd"] = args
+        return _Completed()
+
+    monkeypatch.setenv("PRGUARD_FLAG_SEMGREP_AUTOFIX", "true")
+    monkeypatch.setattr("prguard_ai.semgrep.autofix._get_push_token", lambda: "secret-token")
+    monkeypatch.setattr("prguard_ai.semgrep.autofix._git", _fake_git)
+
+    result = push_autofix_commit(repo, "feat/autofix", "owner/repo")
+    assert result["pushed"] is True
+    push_cmd = captured["cmd"]
+    assert push_cmd[0] == "push"
+    assert push_cmd[1] == "https://x-access-token:secret-token@github.com/owner/repo.git"
+    assert push_cmd[2] == "HEAD:feat/autofix"
+
+
 # --------------------------------------------------------------------------
 # D2: Dynamic weights
 # --------------------------------------------------------------------------
@@ -218,3 +279,31 @@ def test_security_agent_prompt_includes_semgrep_findings(monkeypatch, tmp_path):
     assert "Semgrep" in captured["prompt"]
     assert "no-shell-true" in captured["prompt"]
     assert "AGREE" in captured["prompt"]
+
+
+def test_logic_agent_prompt_includes_semgrep_findings(monkeypatch, tmp_path):
+    from prguard_ai.agents.logic_agent import LogicAgent
+    from prguard_ai.semgrep.parser import SemgrepFinding
+
+    captured = {}
+
+    def _fake_generate(prompt, **kwargs):
+        captured["prompt"] = prompt
+        return "[]", {}
+
+    class _FakeScanner:
+        def scan(self, target, baseline_ref=None):
+            return [SemgrepFinding("rules.python.no-shell-true", "medium", "shell=True", "app.py", 2, "subprocess.run(cmd, shell=True)")]
+
+    monkeypatch.setenv("PRGUARD_FLAG_SEMGREP_INTEGRATION", "true")
+    monkeypatch.setattr("prguard_ai.semgrep.agent._load_scanner", lambda: _FakeScanner())
+    monkeypatch.setattr("prguard_ai.agents.logic_agent.generate_analysis", _fake_generate)
+
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    agent = LogicAgent(repo_metadata={"repository": "owner/repo", "sandbox_path": str(sandbox), "pr_id": "owner/repo#2"})
+    output = agent.run_react_loop("diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -1,1 +1,1 @@\n+ subprocess.run(cmd, shell=True)\n")
+    assert output is not None
+    assert "Semgrep" in captured["prompt"]
+    assert "no-shell-true" in captured["prompt"]
+    assert "DISAGREE" in captured["prompt"]
