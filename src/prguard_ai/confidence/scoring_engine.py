@@ -32,6 +32,7 @@ class ConfidenceScorer:
             "llm_reasoning": 0.62,
             "refined": 0.72,
             "inferred": 0.38,
+            "semgrep": 0.9,
         }
         self.severity_weights = severity_weights or {
             "high": 0.9,
@@ -60,6 +61,7 @@ SOURCE_WEIGHTS: Dict[str, float] = {
     "llm_reasoning": 0.62,
     "refined": 0.72,
     "inferred": 0.38,
+    "semgrep": 0.9,
 }
 SEVERITY_WEIGHTS: Dict[str, float] = {
     "high": 0.9,
@@ -73,6 +75,7 @@ def _counts(issues: Iterable[Issue]) -> dict[str, int]:
     return {
         "total": len(items),
         "rule_based": sum(1 for issue in items if issue.confidence_source == "rule_based"),
+        "semgrep": sum(1 for issue in items if issue.confidence_source == "semgrep"),
         "llm_reasoning": sum(1 for issue in items if issue.confidence_source == "llm_reasoning"),
         "inferred": sum(1 for issue in items if issue.confidence_source == "inferred"),
         "verified": sum(1 for issue in items if issue.verified),
@@ -88,10 +91,10 @@ def compute_confidence_tier(agent_output: AgentOutput) -> ConfidenceTier:
         return ConfidenceTier.HIGH
     counts = _counts(agent_output.issues)
     total = max(counts["total"], 1)
-    rule_ratio = counts["rule_based"] / total
+    deterministic_ratio = (counts["rule_based"] + counts["semgrep"]) / total
     verified_ratio = counts["verified"] / total
     inferred_ratio = counts["inferred"] / total
-    if rule_ratio > 0.5 and verified_ratio > 0.5:
+    if deterministic_ratio > 0.5 and verified_ratio > 0.5:
         return ConfidenceTier.HIGH
     if inferred_ratio > 0.5 or verified_ratio < 0.2:
         return ConfidenceTier.LOW

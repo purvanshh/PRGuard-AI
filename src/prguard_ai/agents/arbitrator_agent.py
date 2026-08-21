@@ -73,12 +73,23 @@ def _issue_similarity(left: Issue, right: Issue) -> float:
     return (line_score * 0.55) + (text_score * 0.45)
 
 
-def deduplicate_issues(issues: Iterable[Issue], threshold: float = 0.72) -> List[Issue]:
-    """Cluster semantically similar issues and keep the strongest representative."""
+def deduplicate_issues(issues: Iterable[Issue], threshold: float = 0.72, hard_loc_match: bool = False) -> List[Issue]:
+    """Cluster semantically similar issues and keep the strongest representative.
+
+    When ``hard_loc_match`` is enabled, issues sharing the same ``(file_path,
+    line)`` are treated as one cluster even if their wording differs. This is
+    used to consolidate deterministic Semgrep findings with LLM findings that
+    point at the same location, preventing duplicate PR comments.
+    """
     clusters: List[List[Issue]] = []
     for issue in issues:
         for cluster in clusters:
-            if any(_issue_similarity(issue, existing) >= threshold for existing in cluster):
+            same_location = (
+                hard_loc_match
+                and (issue.file_path or "") == (cluster[0].file_path or "")
+                and issue.line == cluster[0].line
+            )
+            if same_location or any(_issue_similarity(issue, existing) >= threshold for existing in cluster):
                 cluster.append(issue)
                 break
         else:
@@ -158,7 +169,7 @@ def arbitrate_confidence(context: ReviewContext, partial: bool = False) -> PullR
     overall_confidence = aggregate_confidence_with_weights(successful_outputs)
 
     raw_issues: List[Issue] = [issue for output in successful_outputs for issue in output.issues]
-    issues = deduplicate_issues(raw_issues, threshold=0.99)
+    issues = deduplicate_issues(raw_issues, threshold=0.99, hard_loc_match=True)
     disagreements = detect_agent_disagreements(successful_outputs) + resolve_conflicts(successful_outputs)
 
     report = PullRequestReport(

@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     max_tokens_per_pr: int = Field(8000, validation_alias="MAX_TOKENS_PER_PR")
     admin_token: str = Field(default_factory=lambda: secrets.token_urlsafe(32), validation_alias="ADMIN_TOKEN")
 
+    # Semgrep static analysis integration
+    semgrep_binary: str = Field("semgrep", validation_alias="SEMGREP_BINARY")
+    semgrep_configs: str = Field("p/owasp-top-ten", validation_alias="SEMGREP_CONFIGS")
+    semgrep_timeout_seconds: int = Field(90, validation_alias="SEMGREP_TIMEOUT_SECONDS")
+    semgrep_max_target_bytes: int = Field(2_000_000, validation_alias="SEMGREP_MAX_TARGET_BYTES")
+    semgrep_baseline_ref: str = Field("origin/main", validation_alias="SEMGREP_BASELINE_REF")
+
     model_config = {"extra": "ignore", "env_file": ".env"}
 
     @model_validator(mode="after")
