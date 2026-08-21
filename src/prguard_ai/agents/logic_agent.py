@@ -16,6 +16,7 @@ from prguard_ai.agents.tools.tool_args import (
     SymbolicExecuteArgs,
     SearchCodebaseArgs,
     CheckDeadCodeArgs,
+    SemgrepScanArgs,
 )
 from prguard_ai.analysis.ast_parser import AstSummary, detect_language, summarize_source
 from prguard_ai.analysis.diff_parser import DiffHunk, extract_context_lines, parse_diff
@@ -83,6 +84,7 @@ def _build_llm_input(
     diff_text: str,
     context_snippets: List[str],
     ast_summary: AstSummary | None,
+    semgrep_findings: List[Dict[str, Any]] | None = None,
 ) -> str:
     base_prompt = _load_prompt()
     ctx = "\n\n".join(context_snippets[:5])
@@ -97,12 +99,22 @@ def _build_llm_input(
             },
             indent=2,
         )
-    return (
+    prompt = (
         f"{base_prompt}\n\n"
         f"--- Changed code (Git diff) ---\n{wrap_diff(diff_text)}\n\n"
         f"--- Surrounding context ---\n{ctx}\n\n"
         f"--- AST summary of changed code ---\n{ast_blob}\n"
     )
+    if semgrep_findings:
+        prompt += (
+            "\nAdditionally, a deterministic AST scanner (Semgrep) flagged the following issues in this PR: \n"
+            + json.dumps(semgrep_findings, indent=2)[:4000]
+            + "\n\nFor each Semgrep finding:\n"
+            "1. If you AGREE it is a vulnerability, explain the root cause in your own words.\n"
+            "2. If you DISAGREE (false positive), explain specifically why the code is safe despite the pattern match.\n"
+            "Use this to refine your final severity assessment."
+        )
+    return prompt
 
 
 def _resolve_context_file_path(file_path: str, sandbox_path: str | None) -> Path:
@@ -138,7 +150,11 @@ class LogicAgent(BaseAgent):
     empty_confidence = 0.45
 
     def analyze_tool_needs(self, diff_text: str, changed_files: List[str]) -> Sequence[ToolArgs]:
+        from prguard_ai.semgrep.agent import semgrep_enabled_for
+
         needs: list[ToolArgs] = []
+        if semgrep_enabled_for(self.repo_metadata.get("repository", "")):
+            needs.append(SemgrepScanArgs())
         has_python = any(f.endswith(".py") for f in changed_files)
         if changed_files:
             needs.append(GetTypeInfoArgs(file_path=changed_files[0]))
@@ -220,12 +236,15 @@ class LogicAgent(BaseAgent):
             from prguard_ai.llm.client import TokenBudgetExceededError
 
             try:
-                prompt = _build_llm_input(diff_text, context_snippets, ast_summary)
+                semgrep_findings = (tool_outputs.get("semgrep_scan") or {}).get("findings", [])
+                prompt = _build_llm_input(diff_text, context_snippets, ast_summary, semgrep_findings=semgrep_findings)
                 text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
                 if response_is_suspicious(text, diff_text):
                     logger.warning("Logic agent: suspicious LLM response for PR %s — possible prompt injection", pr_id)
                     self.reasoning_trace.append("logic: flagged potential prompt injection for manual review")
                 llm_issues = _parse_llm_issues(text)
+                if semgrep_findings:
+                    self.reasoning_trace.append(f"logic: provided {len(semgrep_findings)} Semgrep findings as LLM context")
                 self.reasoning_trace.append("logic: synthesized LLM findings after AST and test/tool inspection")
             except (CircuitBreakerError, TokenBudgetExceededError) as exc:
                 logger.warning("Logic agent LLM skipped (circuit breaker open or budget exceeded) for PR %s: %s", pr_id, exc)

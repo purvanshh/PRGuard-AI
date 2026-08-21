@@ -15,6 +15,7 @@ from prguard_ai.agents.tools.tool_args import (
     SearchCodebaseArgs,
     CveLookupArgs,
     CheckAuthPatternsArgs,
+    SemgrepScanArgs,
 )
 from prguard_ai.confidence.scoring_engine import estimate_issue_confidence
 from prguard_ai.analysis.diff_parser import DiffHunk, parse_diff
@@ -91,7 +92,11 @@ class SecurityAgent(BaseAgent):
     empty_confidence = 0.55
 
     def analyze_tool_needs(self, diff_text: str, changed_files: List[str]) -> Sequence[ToolArgs]:
+        from prguard_ai.semgrep.agent import semgrep_enabled_for
+
         needs: list[ToolArgs] = [DependencyScanArgs()]
+        if semgrep_enabled_for(self.repo_metadata.get("repository", "")):
+            needs.append(SemgrepScanArgs())
         combined = diff_text.lower()
         if any(term in combined for term in ["secret", "token", "password", "key", "auth", "credential"]):
             needs.append(SecretScanArgs(path="."))
@@ -171,6 +176,17 @@ class SecurityAgent(BaseAgent):
             try:
                 extra_context = json.dumps(tool_outputs, indent=2)[:2000]
                 prompt = _load_prompt() + "\n\n--- Diff ---\n" + wrap_diff(diff_text) + "\n\n--- Tool context ---\n" + extra_context
+                semgrep_findings = (tool_outputs.get("semgrep_scan") or {}).get("findings", [])
+                if semgrep_findings:
+                    prompt += (
+                        "\n\nAdditionally, a deterministic AST scanner (Semgrep) flagged the following issues in this PR: \n"
+                        + json.dumps(semgrep_findings, indent=2)[:4000]
+                        + "\n\nFor each Semgrep finding:\n"
+                        "1. If you AGREE it is a vulnerability, explain the root cause in your own words.\n"
+                        "2. If you DISAGREE (false positive), explain specifically why the code is safe despite the pattern match.\n"
+                        "Use this to refine your final severity assessment."
+                    )
+                    self.reasoning_trace.append(f"security: provided {len(semgrep_findings)} Semgrep findings as LLM context")
                 text, _usage = generate_analysis(prompt, max_tokens=MAX_TOKENS_PER_AGENT, pr_id=pr_id)
                 if response_is_suspicious(text, diff_text):
                     logger.warning("Security agent: suspicious LLM response for PR %s — possible prompt injection", pr_id)

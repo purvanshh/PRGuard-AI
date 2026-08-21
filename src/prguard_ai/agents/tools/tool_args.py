@@ -81,3 +81,9 @@ class SecretScanArgs(ToolArgs):
 class CheckAuthPatternsArgs(ToolArgs):
     tool_name: Literal["check_auth_patterns"] = "check_auth_patterns"
     file_path: str = "."
+
+
+class SemgrepScanArgs(ToolArgs):
+    tool_name: Literal["semgrep_scan"] = "semgrep_scan"
+    path: str = "."
+    limit: int = 50

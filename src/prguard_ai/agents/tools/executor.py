@@ -54,6 +54,7 @@ class AgentToolExecutor:
             "cve_lookup": self._cve_lookup,
             "secret_scan": self._secret_scan,
             "check_auth_patterns": self._check_auth_patterns,
+            "semgrep_scan": self._semgrep_scan,
         }
 
     @property
@@ -393,3 +394,34 @@ class AgentToolExecutor:
             except Exception:
                 continue
         return ToolResult(tool="check_auth_patterns", output={"auth_issues": auth_issues[:30]})
+
+    def _semgrep_scan(self, args: Dict[str, Any]) -> ToolResult:
+        """Run a Semgrep scan on the sandboxed repo and surface raw findings.
+
+        Gated by the Semgrep integration feature flag; degrades to an empty
+        result when disabled, the sandbox is unavailable, or the binary is
+        missing. Findings are surfaced for LLM corroboration only — they are
+        not emitted as issues here (the dedicated semgrep chord task owns that).
+        """
+        from prguard_ai.semgrep.agent import _load_scanner, semgrep_enabled_for
+
+        repo = str(self.repo_metadata.get("repository", ""))
+        if not semgrep_enabled_for(repo):
+            return ToolResult(tool="semgrep_scan", output={"findings": [], "skipped": "integration disabled"})
+        if self.repo_root is None or not self.repo_root.exists():
+            return ToolResult(tool="semgrep_scan", output={"findings": [], "skipped": "sandbox unavailable"})
+
+        limit = max(1, int(args.get("limit", 50)))
+        findings = _load_scanner().scan(self.repo_root, baseline_ref=None)
+        serialized = [
+            {
+                "rule_id": f.rule_id,
+                "severity": f.severity,
+                "message": f.message,
+                "file_path": f.file_path,
+                "line": f.line,
+                "evidence": f.evidence,
+            }
+            for f in findings[:limit]
+        ]
+        return ToolResult(tool="semgrep_scan", output={"findings": serialized})
