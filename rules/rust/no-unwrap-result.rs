@@ -1,8 +1,8 @@
 fn main() {
     let value: Result<i32, String> = Ok(42);
 
-    // ruleid: no-unwrap-result
     unsafe {
+        // ruleid: no-unwrap-result
         let n = value.unwrap();
         println!("{}", n);
     }
